@@ -10,8 +10,8 @@
 body {
   height: 100dvh;
   display: grid;
-  grid-template-columns: repeat(12, 1fr); /* 12 equal columns */
-  grid-template-rows: repeat(4, 1fr); /* 4 equal rows */
+  grid-template-columns: repeat(9, 1fr); /* 12 equal columns */
+  grid-template-rows: repeat(2, 1fr); /* 4 equal rows */
   gap: 20px;
   place-items: center;
 }
