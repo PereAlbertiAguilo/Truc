@@ -45,6 +45,7 @@ class Player {
   }
 
   getHand(deck) {
+    this.cards = [];
     for (let i = 0; i < 3; i++) {
       this.addCard(deck.getRandCard());
     }
