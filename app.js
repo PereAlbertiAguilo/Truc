@@ -20,6 +20,17 @@ class Deck {
         this.cards.push(new Card(palo[i], j));
       }
     }
+    this.shuffle();
+    this.display();
+  }
+
+  shuffle() {
+    for (var i = this.cards.length - 1; i > 0; i--) {
+      var j = Math.floor(Math.random() * (i + 1));
+      var temp = this.cards[i];
+      this.cards[i] = this.cards[j];
+      this.cards[j] = temp;
+    }
   }
 
   getRandCard() {
@@ -39,8 +50,9 @@ class Deck {
 }
 
 class Player {
-  constructor() {
+  constructor(name) {
     this.playing = false;
+    this.name = name;
     this.cards = [];
   }
 
@@ -54,38 +66,80 @@ class Player {
   addCard(card) {
     if (this.cards.length >= 3) return;
 
-    this.cards.push(card);
     const cardElem = document.createElement("img");
     cardElem.classList.add("card");
+    cardElem.classList.add("interactable");
     cardElem.src =
       "cards/" + card.palo + "/" + card.num + "" + card.palo + ".png";
-    document.body.appendChild(cardElem);
+    cardElem.onclick = () => this.playCard(cardElem);
+    this.cards.push(cardElem);
+  }
+
+  displayCards() {
+    const main = document.getElementById("main");
+    main.innerHTML = "";
+    for (let card of this.cards) {
+      main.appendChild(card);
+    }
+  }
+
+  playCard(cardElem) {
+    cardElem.classList.add("play");
+    cardElem.classList.remove("interactable");
   }
 }
 
-const deck = new Deck();
-deck.fill([2, 8, 9]);
+class Game {
+  constructor() {
+    this.deck = new Deck();
+    this.players = [];
+    this.rounds = 0;
+    this.activeIndex = 0;
+    this.activePlayer = null;
+  }
 
-document.body.appendChild(document.createElement("div"));
+  start() {
+    this.deck = new Deck();
+    this.players = [];
+    this.rounds = 0;
+    this.activeIndex = 0;
 
-const player1 = new Player();
-player1.getHand(deck);
+    this.deck.fill([2, 8, 9]);
 
-document.body.appendChild(document.createElement("div"));
+    for (let i = 0; i < 4; i++) {
+      const player = new Player("Player " + (i + 1));
+      player.getHand(this.deck);
+      this.players.push(player);
+    }
 
-const player2 = new Player();
-player2.getHand(deck);
+    this.activePlayer = this.players[this.activeIndex];
+    this.activePlayer.displayCards();
+  }
 
-document.body.appendChild(document.createElement("div"));
-document.body.appendChild(document.createElement("div"));
+  updateTurn() {
+    this.activeIndex++;
+    if (this.activeIndex >= 4) {
+      this.rounds++;
+      this.activeIndex = 0;
+      console.log("round up");
+    }
+    if (this.rounds >= 3) {
+      this.rounds = 0;
+      this.deck.fill([2, 8, 9]);
+      this.players.forEach((p) => p.getHand(this.deck));
+      console.log("round");
+    }
+    console.log("turn");
+    this.activePlayer = this.players[this.activeIndex];
+    this.activePlayer.displayCards();
+  }
+}
 
-const player3 = new Player();
-player3.getHand(deck);
+const game = new Game();
+game.start();
 
-document.body.appendChild(document.createElement("div"));
-
-const player4 = new Player();
-player4.getHand(deck);
-
-document.body.appendChild(document.createElement("div"));
+const btn = document.getElementById("btn");
+btn.addEventListener("click", () => {
+  game.updateTurn();
+});
 // deck.display();
