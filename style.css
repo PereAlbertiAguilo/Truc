@@ -33,12 +33,20 @@ body {
 
 #scoreboard {
   display: flex;
+  align-items: center;
   justify-content: center;
+  flex-wrap: wrap;
   gap: clamp(12px, 4vw, 36px);
   color: #d8ddce;
   font-size: clamp(13px, 2vw, 17px);
   font-weight: 600;
   letter-spacing: 0.04em;
+}
+
+#spectatorStatus {
+  color: #aebbaa;
+  font-size: 0.8em;
+  letter-spacing: 0.02em;
 }
 
 .teamScore {
