@@ -7,31 +7,60 @@
     <title>Truc</title>
   </head>
   <body>
-    <div id="table">
-      <div class="player pLeft">
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-      </div>
-      <div class="player pRight">
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-      </div>
-      <div class="player pTop">
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-        <img class="card" src="cards/rev.png" alt="card" />
-      </div>
-      <div id="main"></div>
+    <div id="scoreboard">
+      <div class="teamScore">Team A: <span id="scoreA">0</span></div>
+      <div class="teamScore">Team B: <span id="scoreB">0</span></div>
     </div>
-    <button
-      id="btn"
+
+    <div id="messages"></div>
+
+    <div id="table">
+      <div id="tableCards"></div>
+
+      <div id="pTop" class="player pTop">
+        <div class="playerName" id="nameTop"></div>
+        <div class="playerLabel" id="labelTop"></div>
+        <div id="pTopCards"></div>
+      </div>
+
+      <div id="pLeft" class="player pLeft">
+        <div class="playerName" id="nameLeft"></div>
+        <div class="playerLabel" id="labelLeft"></div>
+        <div id="pLeftCards"></div>
+      </div>
+
+      <div id="pRight" class="player pRight">
+        <div class="playerName" id="nameRight"></div>
+        <div class="playerLabel" id="labelRight"></div>
+        <div id="pRightCards"></div>
+      </div>
+
+      <div id="main" class="player">
+        <div class="playerName" id="nameBottom"></div>
+        <div class="playerLabel" id="labelBottom"></div>
+        <div id="mainCards"></div>
+      </div>
+    </div>
+
+    <div id="bids" style="position: absolute; top: 10px; left: 10px">
+      <button onclick="callBid('truc')">Truc</button>
+      <button onclick="callBid('retruc')">Retruc</button>
+      <button onclick="callBid('valnou')">Val Nou</button>
+      <button onclick="callBid('jocfora')">Joc Fora</button>
+    </div>
+
+    <div id="bidResponse" style="position: absolute; top: 60px; left: 10px">
+      <button onclick="respondBid(true)">Sí</button>
+      <button onclick="respondBid(false)">No</button>
+    </div>
+    <div
+      class="btns"
       style="position: absolute; right: 0; left: 0; bottom: 10px"
-      onclick=""
     >
-      Update Turn
-    </button>
-    <script src="./app.js"></script>
+      <button id="update">Update Turn</button>
+      <button id="reset">Reload</button>
+    </div>
+
+    <script type="module" src="./app.js"></script>
   </body>
 </html>
