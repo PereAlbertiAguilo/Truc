@@ -10,10 +10,17 @@
     <div id="scoreboard">
       <div class="teamScore">Equip A <span id="scoreA">0</span></div>
       <div class="teamScore">Equip B <span id="scoreB">0</span></div>
-      <div id="spectatorStatus" aria-live="polite">Espectadors 0/4</div>
+      <div id="spectatorStatus" aria-live="polite">Espectadors: 0/4</div>
     </div>
 
     <div id="messages"></div>
+    <div
+      id="gameEvents"
+      role="log"
+      aria-live="polite"
+      aria-relevant="additions"
+      aria-label="Esdeveniments de la partida"
+    ></div>
 
     <div id="table">
       <div id="tableCards"></div>
@@ -51,9 +58,9 @@
       <button id="closeBidDialog" type="button">Tanca</button>
     </dialog>
     <div class="game-controls">
-      <button id="reset" type="button" hidden>Reinicia sa sala</button>
+      <button id="reset" type="button" hidden>Reinicia la sala</button>
     </div>
 
-    <script type="module" src="./app.js?v=20261007-13"></script>
+    <script type="module" src="./app.js?v=20261007-16"></script>
   </body>
 </html>

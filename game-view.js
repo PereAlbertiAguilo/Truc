@@ -8,6 +8,7 @@ import {
   teamOf,
 } from "./game-rules.js";
 import { Player } from "./cards.js";
+import { formatGameEvent } from "./game-events.js";
 
 const playerPositions = ["bottom", "right", "top", "left"];
 
@@ -26,6 +27,7 @@ export function createGameView({
     scoreA: document.getElementById("scoreA"),
     scoreB: document.getElementById("scoreB"),
     messages: document.getElementById("messages"),
+    gameEvents: document.getElementById("gameEvents"),
     tableCards: document.getElementById("tableCards"),
     mainCards: document.getElementById("mainCards"),
     otherCardContainers: {
@@ -58,6 +60,8 @@ export function createGameView({
     closeBidDialog: document.getElementById("closeBidDialog"),
     openBidDialog: document.getElementById("openBidDialog"),
   };
+  const seenGameEventIds = new Set();
+  let gameEventHistoryInitialized = false;
 
   function viewerPlayerIndex() {
     const playerIndex = getPlayerIndex();
@@ -93,13 +97,14 @@ export function createGameView({
 
     if (state.status === "finished" && state.matchWinner) {
       elements.messages.textContent =
-        `S'equip ${state.matchWinner} ha guanyat es joc!`;
+        `L'equip ${state.matchWinner} ha guanyat el joc!`;
     }
   }
 
   function clearGame() {
     elements.openBidDialog.hidden = true;
     if (elements.bidDialog.open) elements.bidDialog.close();
+    elements.gameEvents.replaceChildren();
     elements.scoreA.textContent = "0";
     elements.scoreB.textContent = "0";
 
@@ -121,11 +126,42 @@ export function createGameView({
     game.table = [];
   }
 
+  function showGameEvents(eventLog) {
+    if (!gameEventHistoryInitialized) {
+      for (const event of eventLog) {
+        if (event?.id) seenGameEventIds.add(event.id);
+      }
+      gameEventHistoryInitialized = true;
+      return;
+    }
+
+    const currentEventIds = new Set(
+      eventLog.map((event) => event?.id).filter(Boolean),
+    );
+    for (const eventId of seenGameEventIds) {
+      if (!currentEventIds.has(eventId)) seenGameEventIds.delete(eventId);
+    }
+
+    for (const event of eventLog) {
+      if (!event?.id || seenGameEventIds.has(event.id)) continue;
+      seenGameEventIds.add(event.id);
+
+      const message = formatGameEvent(event);
+      if (!message) continue;
+
+      const notice = document.createElement("div");
+      notice.className = "game-event";
+      notice.textContent = message;
+      elements.gameEvents.appendChild(notice);
+      setTimeout(() => notice.remove(), 6_000);
+    }
+  }
+
   function updateGameMessage() {
     if (hasLegacySeats(getRoomPlayers())) {
       elements.messages.textContent =
-        "Aquesta partida és d'una versió anterior. " +
-        "Acabau-la abans de reiniciar sa sala per activar ses substitucions.";
+        "Aquesta partida fa servir una versió anterior. " +
+        "Acabeu-la abans de reiniciar la sala per activar les substitucions.";
     } else if (!getIsSpectator()) {
       elements.messages.textContent = "";
     }
@@ -307,7 +343,7 @@ export function createGameView({
       elements.bidDialogTitle.textContent = "Fer una aposta";
       const points = bidValue(nextLevel);
       elements.bidDialogMessage.textContent =
-        `S'aposta següent és ${bidLabel(nextLevel)} (${points} ${points === 1 ? "punt" : "punts"}).`;
+        `La següent aposta és ${bidLabel(nextLevel)} (${points} ${points === 1 ? "punt" : "punts"}).`;
       elements.bidDialogActions.replaceChildren();
       addBidDialogAction(`Dir ${bidLabel(nextLevel)}`, () =>
         onPlaceBid(nextLevel),
@@ -318,8 +354,8 @@ export function createGameView({
   function renderBidResponse(pendingBid) {
     elements.bidDialogTitle.textContent = `${bidLabel(pendingBid.level)}!`;
     elements.bidDialogMessage.textContent =
-      `S'equip ${pendingBid.team} ha dit ${bidLabel(pendingBid.level)} i posa s'aposta a ${bidValue(pendingBid.level)} punts. ` +
-      "Podeu acceptar, rebutjar o pujar al nivell següent.";
+      `L'equip ${pendingBid.team} ha cantat ${bidLabel(pendingBid.level)} per ${bidValue(pendingBid.level)} punts. ` +
+      "L'equip contrari pot acceptar l'aposta, rebutjar-la o apujar-la.";
     elements.bidDialogActions.replaceChildren();
     addBidDialogAction("Acceptar", () => onRespondToBid("accept"));
 
@@ -328,14 +364,14 @@ export function createGameView({
     const declinedPoints = bidValue(previousLevel);
     addBidDialogAction(
       pendingBid.level === "jocfora"
-        ? "Rebutjar (perdre es joc)"
+        ? "Rebutjar (perdre el joc)"
         : `Rebutjar (${declinedPoints} ${declinedPoints === 1 ? "punt" : "punts"})`,
       () => onRespondToBid("decline"),
     );
 
     const nextLevel = raiseLevel(pendingBid.level);
     if (nextLevel) {
-      addBidDialogAction(`Pujar a ${bidLabel(nextLevel)}`, () =>
+      addBidDialogAction(`Apujar a ${bidLabel(nextLevel)}`, () =>
         onRespondToBid("raise"),
       );
     }
@@ -368,6 +404,7 @@ export function createGameView({
 
   return {
     render,
+    showGameEvents,
     closeBidDialog() {
       if (elements.bidDialog.open) elements.bidDialog.close();
     },

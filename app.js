@@ -1,5 +1,6 @@
 import { Deck, Player } from "./cards.js";
 import {
+  bidLabel,
   bidLevels,
   bidValue,
   getHandWinner,
@@ -51,7 +52,7 @@ try {
 } catch (error) {
   console.error("Ha fallat l'inici de sessió anònim a Firebase:", error);
   document.getElementById("messages").textContent =
-    "No ens hem pogut connectar a Firebase. Comprovau que l'accés anònim estigui activat.";
+    "No ens hem pogut connectar a Firebase. Comproveu que l'accés anònim estigui activat.";
   throw error;
 }
 
@@ -61,7 +62,7 @@ const playersRef = ref(db, roomName + "/lobbyPlayers");
 const connectedRef = ref(db, ".info/connected");
 const MAX_ROOM_SIZE = 8;
 const MAX_SPECTATORS = MAX_ROOM_SIZE - 4;
-const DISCONNECT_GRACE_MS = 20_000;
+const DISCONNECT_GRACE_MS = 10_000;
 function createPlayerId() {
   const cryptoApi = globalThis.crypto;
   if (cryptoApi?.randomUUID) return cryptoApi.randomUUID();
@@ -77,9 +78,29 @@ function createPlayerId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
+function createGameEventId() {
+  return (
+    globalThis.crypto?.randomUUID?.() ||
+    `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`
+  );
+}
+
+function createGameEvent(id, type, details = {}) {
+  return { id, type, ...details };
+}
+
+function recordGameEvents(state, events) {
+  if (events.length === 0) return state;
+  return {
+    ...state,
+    eventLog: [...(state.eventLog || []), ...events].slice(-40),
+  };
+}
+
 const playerId = createPlayerId();
 let claimingSeat = false;
 let startingGame = false;
+let resettingRoom = false;
 let connected = false;
 let gameStateLoaded = false;
 let presenceWrite = null;
@@ -102,10 +123,7 @@ function updateResetControl(players) {
 }
 
 function publishPresence() {
-  if (
-    !connected ||
-    presenceWrite?.generation === connectionGeneration
-  ) {
+  if (!connected || presenceWrite?.generation === connectionGeneration) {
     return;
   }
 
@@ -124,7 +142,7 @@ function publishPresence() {
       roomFull = false;
     })
     .catch((error) => {
-      console.error("No s'ha pogut registrar sa presència:", error);
+      console.error("No s'ha pogut registrar la presència:", error);
     })
     .finally(() => {
       if (presenceWrite?.promise === write) presenceWrite = null;
@@ -160,31 +178,53 @@ function hasLegacySeats(players) {
 }
 
 function startGameIfReady(players) {
-  if (!isCurrentHost(players) || startingGame || !isLobbyReady(players)) return;
+  if (
+    resettingRoom ||
+    lastGameState?.status === "playing" ||
+    lastGameState?.status === "finished" ||
+    !isCurrentHost(players) ||
+    startingGame ||
+    !isLobbyReady(players)
+  ) {
+    return;
+  }
 
   startingGame = true;
-  game.start(players).catch((error) => {
-    startingGame = false;
-    console.error("No s'ha pogut iniciar sa partida:", error);
-  });
+  game
+    .start(players)
+    .then(({ committed }) => {
+      if (!committed) startingGame = false;
+    })
+    .catch((error) => {
+      startingGame = false;
+      console.error("No s'ha pogut iniciar la partida:", error);
+    });
 }
 
 function updateLobbyMessage(players) {
-  const seatedPlayers = [0, 1, 2, 3].filter((index) => players?.[index]?.name)
-    .length;
+  const seatedPlayers = [0, 1, 2, 3].filter(
+    (index) => players?.[index]?.name,
+  ).length;
   const spectatorIds = Object.keys(players?.spectators || {});
   const spectatorCount = spectatorIds.length;
   const message = document.getElementById("messages");
   const spectatorStatus = document.getElementById("spectatorStatus");
-  spectatorStatus.textContent = `Espectadors ${spectatorCount}/${MAX_SPECTATORS}`;
+  spectatorStatus.textContent = `Espectadors: ${spectatorCount}/${MAX_SPECTATORS}`;
   spectatorStatus.title = spectatorIds
     .map((id) => players.spectators[id].name)
     .join(", ");
 
   if (hasLegacySeats(players)) {
     message.textContent =
-      "Aquesta sala és d'una versió anterior. " +
-      "L'amfitrió l'ha de reiniciar quan sigui segur per activar ses substitucions.";
+      "Aquesta sala fa servir una versió anterior. " +
+      "L'amfitrió l'ha de reiniciar quan sigui segur per activar les substitucions.";
+    return;
+  }
+
+  if (
+    lastGameState?.status === "playing" ||
+    lastGameState?.status === "finished"
+  ) {
     return;
   }
 
@@ -196,31 +236,30 @@ function updateLobbyMessage(players) {
     );
     const queuePosition = queue.indexOf(playerId) + 1;
     message.textContent =
-      `Sou es espectador (${queuePosition}/${spectatorCount}). ` +
+      `Sou a la cua d'espectadors (${queuePosition}/${spectatorCount}). ` +
       "Entrareu a jugar quan quedi un lloc lliure.";
     return;
   }
 
   if (roomFull && myPlayerIndex === null) {
-    message.textContent = "Sa sala és plena (8/8).";
+    message.textContent = "La sala és plena (8/8).";
     return;
   }
 
   if (isLobbyReady(players)) {
     if (myPlayerIndex === null) {
       message.textContent =
-        "Sa sala és plena. Tancau ses pestanyes antigues o reiniciau sa sala des de sa pestanya de qui l'ha creada.";
+        "La sala és plena. Tanqueu les pestanyes antigues o demaneu a qui l'ha creada que la reiniciï.";
     } else {
-      message.textContent =
-        isCurrentHost(players)
-          ? "Iniciant sa partida…"
-          : "Tots es jugadors ja hi són. Esperant que comenci sa partida…";
+      message.textContent = isCurrentHost(players)
+        ? "Iniciant la partida…"
+        : "Tots els jugadors ja hi són. Esperant que comenci la partida…";
     }
   } else if (seatedPlayers === 4) {
     message.textContent =
-      "Esperant que tornin a estar connectats tots es jugadors…";
+      "Esperant que tots els jugadors tornin a estar connectats…";
   } else {
-    message.textContent = `Esperant es jugadors (${seatedPlayers}/4)…`;
+    message.textContent = `Esperant els jugadors (${seatedPlayers}/4)…`;
   }
 }
 
@@ -316,7 +355,7 @@ function claimMembership() {
       refreshCurrentGameView();
     })
     .catch((error) => {
-      console.error("No s'ha pogut reservar un lloc a sa sala:", error);
+      console.error("No s'ha pogut reservar un lloc a la sala:", error);
     })
     .finally(() => {
       claimingSeat = false;
@@ -331,9 +370,7 @@ onValue(playersRef, (snapshot) => {
     return;
   }
 
-  const ownSeat = [0, 1, 2, 3].find(
-    (index) => players[index]?.id === playerId,
-  );
+  const ownSeat = [0, 1, 2, 3].find((index) => players[index]?.id === playerId);
   if (ownSeat !== undefined) {
     myPlayerIndex = ownSeat;
     myName = players[ownSeat].name;
@@ -382,10 +419,7 @@ function scheduleHostElection(players) {
 
     runTransaction(playersRef, (currentPlayers) => {
       const current = currentPlayers || {};
-      if (
-        currentHostId(current) !== hostId ||
-        current.presence?.[hostId]
-      ) {
+      if (currentHostId(current) !== hostId || current.presence?.[hostId]) {
         return;
       }
 
@@ -446,16 +480,11 @@ function scheduleSeatReclamation(players) {
       runTransaction(playersRef, (currentPlayers) => {
         const current = currentPlayers || {};
         const currentSeat = current[index];
-        if (
-          currentSeat?.id !== seat.id ||
-          current.presence?.[seat.id]
-        ) {
+        if (currentSeat?.id !== seat.id || current.presence?.[seat.id]) {
           return;
         }
 
-        const waitingSpectators = Object.entries(
-          current.spectators || {},
-        )
+        const waitingSpectators = Object.entries(current.spectators || {})
           .filter(([spectatorId]) => current.presence?.[spectatorId])
           .sort(([, a], [, b]) => (a.joinedAt || 0) - (b.joinedAt || 0));
         const nextSpectator = waitingSpectators[0];
@@ -480,10 +509,7 @@ function scheduleSeatReclamation(players) {
         .then(({ snapshot: updatedSnapshot }) => {
           const updatedPlayers = updatedSnapshot.val() || {};
           const promotedSeat = updatedPlayers[index];
-          if (
-            promotedSeat?.id &&
-            promotedSeat.id !== seat.id
-          ) {
+          if (promotedSeat?.id && promotedSeat.id !== seat.id) {
             runTransaction(gameRef, (state) => {
               if (!state?.players?.[index]) return;
               const gamePlayers = [...state.players];
@@ -493,12 +519,12 @@ function scheduleSeatReclamation(players) {
               };
               return { ...state, players: gamePlayers };
             }).catch((error) => {
-              console.error("No s'ha pogut actualitzar es jugador nou:", error);
+              console.error("No s'ha pogut actualitzar el jugador nou:", error);
             });
           }
         })
         .catch((error) => {
-          console.error("No s'ha pogut recuperar es lloc:", error);
+          console.error("No s'ha pogut recuperar el lloc:", error);
         })
         .finally(() => seatTimers.delete(index));
     }, DISCONNECT_GRACE_MS);
@@ -528,9 +554,14 @@ function scheduleSeatReclamation(players) {
         const spectators = { ...current.spectators };
         delete spectators[spectatorId];
         return { ...current, spectators };
-      }).catch((error) => {
-        console.error("No s'ha pogut llevar es espectador desconnectat:", error);
-      }).finally(() => spectatorTimers.delete(spectatorId));
+      })
+        .catch((error) => {
+          console.error(
+            "No s'ha pogut retirar l'espectador desconnectat:",
+            error,
+          );
+        })
+        .finally(() => spectatorTimers.delete(spectatorId));
     }, DISCONNECT_GRACE_MS);
     spectatorTimers.set(spectatorId, timer);
   }
@@ -553,7 +584,7 @@ class Game {
   }
 
   start(playersFromDB) {
-    console.log("S'inicia sa partida.");
+    console.log("S'inicia la partida.");
 
     this.deck.fill([2, 8, 9]);
 
@@ -588,7 +619,9 @@ class Game {
       scoreA: this.scoreA,
       scoreB: this.scoreB,
       matchWinner: null,
+      eventLog: [],
     };
+    const startedEvent = createGameEvent(createGameEventId(), "game-started");
 
     return runTransaction(gameRef, (currentState) => {
       if (
@@ -597,10 +630,11 @@ class Game {
       ) {
         return;
       }
-      return { ...initialState, status: "playing" };
+      return recordGameEvents({ ...initialState, status: "playing" }, [
+        startedEvent,
+      ]);
     });
   }
-
 }
 
 const game = new Game();
@@ -622,6 +656,7 @@ const gameView = createGameView({
 // ---------------- GAME ACTIONS ----------------
 function playCard(card) {
   if (game.turnPlayerIndex !== myPlayerIndex) return;
+  const eventPrefix = createGameEventId();
 
   runTransaction(gameRef, (state) => {
     if (
@@ -655,10 +690,17 @@ function playCard(card) {
       table,
       turnPlayerIndex: nextPlayerIndex(myPlayerIndex),
     };
+    const events = [
+      createGameEvent(`${eventPrefix}-0`, "card-played", {
+        playerName: state.players[myPlayerIndex].name,
+        card,
+      }),
+    ];
 
-    if (table.length % 4 !== 0) return nextState;
+    if (table.length % 4 !== 0) return recordGameEvents(nextState, events);
 
     const winnerIndex = getTrickWinner(table.slice(-4));
+    const trickNumber = (state.trickWinners || []).length + 1;
     const trickWinners = [
       ...(state.trickWinners || []),
       winnerIndex === null ? "tie" : teamOf(winnerIndex),
@@ -666,26 +708,46 @@ function playCard(card) {
     const resolvedState = { ...nextState, trickWinners };
 
     const winner = getHandWinner(trickWinners, state.manoIndex);
+    const trickEventId = `${eventPrefix}-${events.length}`;
+    events.push(
+      winnerIndex === null
+        ? createGameEvent(trickEventId, "trick-tied", {
+            trickNumber,
+            firstTrick: trickWinners[0],
+            manoTeam: teamOf(state.manoIndex),
+          })
+        : createGameEvent(trickEventId, "trick-won", {
+            trickNumber,
+            team: teamOf(winnerIndex),
+          }),
+    );
+
     if (winner) {
       return awardPoints(
         resolvedState,
         winner,
         state.currentBid || 1,
         state.bidLevel === "jocfora",
+        events,
+        eventPrefix,
       );
     }
 
-    return {
-      ...resolvedState,
-      turnPlayerIndex: winnerIndex ?? state.manoIndex,
-    };
+    return recordGameEvents(
+      {
+        ...resolvedState,
+        turnPlayerIndex: winnerIndex ?? state.manoIndex,
+      },
+      events,
+    );
   }).catch((error) => {
-    console.error("No s'ha pogut jugar sa carta:", error);
+    console.error("No s'ha pogut jugar la carta:", error);
   });
 }
 
 function placeBid(level) {
   if (!Number.isInteger(myPlayerIndex)) return;
+  const eventId = createGameEventId();
 
   runTransaction(gameRef, (state) => {
     if (!state || state.status !== "playing") return;
@@ -699,20 +761,32 @@ function placeBid(level) {
 
     if (raiseLevel(pendingBid?.level || state.bidLevel) !== level) return;
 
-    return {
-      ...state,
-      pendingBid: {
-        level,
-        team: teamOf(myPlayerIndex),
-        actorIndex: myPlayerIndex,
-        responderTeam: otherTeam(teamOf(myPlayerIndex)),
-      },
+    const raisedBid = {
+      level,
+      team: teamOf(myPlayerIndex),
+      actorIndex: myPlayerIndex,
+      responderTeam: otherTeam(teamOf(myPlayerIndex)),
     };
-  }).then(({ committed }) => {
-    if (committed) gameView.closeBidDialog();
-  }).catch((error) => {
-    console.error("No s'ha pogut fer s'aposta:", error);
-  });
+    return recordGameEvents(
+      {
+        ...state,
+        pendingBid: raisedBid,
+      },
+      [
+        createGameEvent(eventId, "bid-called", {
+          team: raisedBid.team,
+          level,
+          points: bidValue(level),
+        }),
+      ],
+    );
+  })
+    .then(({ committed }) => {
+      if (committed) gameView.closeBidDialog();
+    })
+    .catch((error) => {
+      console.error("No s'ha pogut fer l'aposta:", error);
+    });
 }
 
 function dealNextHandState(state) {
@@ -742,25 +816,46 @@ function dealNextHandState(state) {
   };
 }
 
-function awardPoints(state, team, points, forceMatchWinner = false) {
+function awardPoints(
+  state,
+  team,
+  points,
+  forceMatchWinner = false,
+  precedingEvents = [],
+  eventPrefix = createGameEventId(),
+) {
   const scoreKey = team === "A" ? "scoreA" : "scoreB";
   const score = (state[scoreKey] || 0) + points;
   const updatedState = { ...state, [scoreKey]: score, pendingBid: null };
+  const events = [
+    ...precedingEvents,
+    createGameEvent(`${eventPrefix}-${precedingEvents.length}`, "hand-won", {
+      team,
+      points,
+    }),
+  ];
 
   if (forceMatchWinner || score >= 18) {
-    return {
-      ...updatedState,
-      [scoreKey]: 18,
-      status: "finished",
-      matchWinner: team,
-    };
+    events.push(
+      createGameEvent(`${eventPrefix}-${events.length}`, "game-won", { team }),
+    );
+    return recordGameEvents(
+      {
+        ...updatedState,
+        [scoreKey]: 18,
+        status: "finished",
+        matchWinner: team,
+      },
+      events,
+    );
   }
 
-  return dealNextHandState(updatedState);
+  return recordGameEvents(dealNextHandState(updatedState), events);
 }
 
 function respondToBid(action) {
   if (!Number.isInteger(myPlayerIndex)) return;
+  const eventPrefix = createGameEventId();
 
   runTransaction(gameRef, (state) => {
     const pendingBid = state?.pendingBid;
@@ -776,30 +871,68 @@ function respondToBid(action) {
     if (action === "raise") {
       const level = raiseLevel(pendingBid.level);
       if (!level) return;
-      return {
-        ...state,
-        pendingBid: {
-          level,
-          team: teamOf(myPlayerIndex),
-          actorIndex: myPlayerIndex,
-          responderTeam: otherTeam(teamOf(myPlayerIndex)),
-        },
+      const raisedBid = {
+        level,
+        team: teamOf(myPlayerIndex),
+        actorIndex: myPlayerIndex,
+        responderTeam: otherTeam(teamOf(myPlayerIndex)),
       };
+      return recordGameEvents(
+        {
+          ...state,
+          pendingBid: raisedBid,
+        },
+        [
+          createGameEvent(`${eventPrefix}-0`, "bid-called", {
+            team: raisedBid.team,
+            level,
+            points: bidValue(level),
+          }),
+        ],
+      );
     }
 
     if (action === "accept") {
-      return {
-        ...state,
-        currentBid: bidValue(pendingBid.level),
-        bidLevel: pendingBid.level,
-        turnPlayerIndex: nextPlayerIndex(pendingBid.actorIndex),
-        pendingBid: null,
-      };
+      return recordGameEvents(
+        {
+          ...state,
+          currentBid: bidValue(pendingBid.level),
+          bidLevel: pendingBid.level,
+          turnPlayerIndex: nextPlayerIndex(pendingBid.actorIndex),
+          pendingBid: null,
+        },
+        [
+          createGameEvent(`${eventPrefix}-0`, "bid-accepted", {
+            team: pendingBid.team,
+            acceptingTeam: teamOf(myPlayerIndex),
+            level: pendingBid.level,
+            points: bidValue(pendingBid.level),
+          }),
+        ],
+      );
     }
 
     if (action === "decline") {
+      const declineEvent = createGameEvent(`${eventPrefix}-0`, "bid-declined", {
+        decliningTeam: teamOf(myPlayerIndex),
+        level: pendingBid.level,
+        team: pendingBid.team,
+        points:
+          pendingBid.level === "jocfora"
+            ? 18
+            : bidValue(
+                bidLevels[bidLevels.indexOf(pendingBid.level) - 1] || "none",
+              ),
+      });
       if (pendingBid.level === "jocfora") {
-        return awardPoints(state, pendingBid.team, 18, true);
+        return awardPoints(
+          state,
+          pendingBid.team,
+          18,
+          true,
+          [declineEvent],
+          eventPrefix,
+        );
       }
 
       const previousLevel =
@@ -808,10 +941,18 @@ function respondToBid(action) {
         state,
         pendingBid.team,
         bidValue(previousLevel),
+        false,
+        [
+          {
+            ...declineEvent,
+            points: bidValue(previousLevel),
+          },
+        ],
+        eventPrefix,
       );
     }
   }).catch((error) => {
-    console.error("No s'ha pogut respondre a s'aposta:", error);
+    console.error("No s'ha pogut respondre a l'aposta:", error);
   });
 }
 
@@ -819,8 +960,11 @@ function respondToBid(action) {
 onValue(gameRef, (snapshot) => {
   lastGameState = snapshot.val();
   gameStateLoaded = true;
+  startingGame = false;
   gameView.render(lastGameState);
+  gameView.showGameEvents(lastGameState?.eventLog || []);
   claimMembership();
+  if (!lastGameState) startGameIfReady(roomPlayers);
 });
 
 function refreshCurrentGameView() {
@@ -828,16 +972,33 @@ function refreshCurrentGameView() {
 }
 
 document.getElementById("reset").onclick = () => {
-  if (isCurrentHost()) {
-    Promise.all([set(playersRef, null), set(gameRef, null)]).catch((error) => {
-      console.error("No s'ha pogut reiniciar sa sala:", error);
+  if (!isCurrentHost() || resettingRoom) return;
+
+  resettingRoom = true;
+  startingGame = false;
+  const resetButton = document.getElementById("reset");
+  resetButton.disabled = true;
+
+  Promise.all([set(playersRef, null), set(gameRef, null)])
+    .then(() => {
+      startingGame = false;
+      resettingRoom = false;
+      resetButton.disabled = false;
+      updateLobbyMessage(roomPlayers);
+      startGameIfReady(roomPlayers);
+    })
+    .catch((error) => {
+      resettingRoom = false;
+      resetButton.disabled = false;
+      document.getElementById("messages").textContent =
+        "No s'ha pogut reiniciar la sala. Torneu-ho a provar.";
+      console.error("No s'ha pogut reiniciar la sala:", error);
     });
-  }
 };
 
 console.log(
-  "Aplicació iniciada. Identificador de jugador:",
+  "Aplicació iniciada. Identificador del jugador:",
   playerId,
-  "Lloc de jugador:",
+  "Seient del jugador:",
   myPlayerIndex,
 );

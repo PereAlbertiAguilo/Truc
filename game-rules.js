@@ -63,17 +63,21 @@ export function getTrickWinner(trickCards) {
 }
 
 export function getHandWinner(trickWinners, manoIndex) {
-  const winsA = trickWinners.filter((winner) => winner === "A").length;
-  const winsB = trickWinners.filter((winner) => winner === "B").length;
+  if (trickWinners.length < 2) return null;
 
-  if (winsA >= 2) return "A";
-  if (winsB >= 2) return "B";
-  if (trickWinners.length < 3) return null;
-  if (winsA > winsB) return "A";
-  if (winsB > winsA) return "B";
+  const [firstTrick, secondTrick, thirdTrick] = trickWinners;
+  if (firstTrick === "tie") {
+    if (secondTrick !== "tie") return secondTrick;
+    if (thirdTrick === undefined) return null;
+    return thirdTrick === "tie" ? teamOf(manoIndex) : thirdTrick;
+  }
 
-  const firstDecisiveTrick = trickWinners.find((winner) => winner !== "tie");
-  return firstDecisiveTrick || teamOf(manoIndex);
+  if (secondTrick === "tie" || firstTrick === secondTrick) {
+    return firstTrick;
+  }
+  if (thirdTrick === undefined) return null;
+
+  return thirdTrick === "tie" ? firstTrick : thirdTrick;
 }
 
 export function nextPlayerIndex(index) {
