@@ -1,15 +1,15 @@
 <!doctype html>
-<html lang="en">
+<html lang="ca">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <link rel="stylesheet" href="style.css" />
-    <title>Truc</title>
+    <title>Truc mallorquí</title>
   </head>
   <body>
     <div id="scoreboard">
-      <div class="teamScore">Team A: <span id="scoreA">0</span></div>
-      <div class="teamScore">Team B: <span id="scoreB">0</span></div>
+      <div class="teamScore">Equip A <span id="scoreA">0</span></div>
+      <div class="teamScore">Equip B <span id="scoreB">0</span></div>
     </div>
 
     <div id="messages"></div>
@@ -42,25 +42,17 @@
       </div>
     </div>
 
-    <div id="bids" style="position: absolute; top: 10px; left: 10px">
-      <button onclick="callBid('truc')">Truc</button>
-      <button onclick="callBid('retruc')">Retruc</button>
-      <button onclick="callBid('valnou')">Val Nou</button>
-      <button onclick="callBid('jocfora')">Joc Fora</button>
+    <button id="openBidDialog" type="button" hidden>Fer una aposta</button>
+    <dialog id="bidDialog" aria-labelledby="bidDialogTitle">
+      <h2 id="bidDialogTitle">Aposta</h2>
+      <p id="bidDialogMessage"></p>
+      <div id="bidDialogActions"></div>
+      <button id="closeBidDialog" type="button">Tanca</button>
+    </dialog>
+    <div class="game-controls">
+      <button id="reset" type="button" hidden>Reinicia sa sala</button>
     </div>
 
-    <div id="bidResponse" style="position: absolute; top: 60px; left: 10px">
-      <button onclick="respondBid(true)">Sí</button>
-      <button onclick="respondBid(false)">No</button>
-    </div>
-    <div
-      class="btns"
-      style="position: absolute; right: 0; left: 0; bottom: 10px"
-    >
-      <button id="update">Update Turn</button>
-      <button id="reset">Reload</button>
-    </div>
-
-    <script type="module" src="./app.js"></script>
+    <script type="module" src="./app.js?v=20261007-8"></script>
   </body>
 </html>

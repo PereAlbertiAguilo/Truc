@@ -14,7 +14,6 @@ import {
   onValue,
   runTransaction,
   set,
-  update,
 } from "https://www.gstatic.com/firebasejs/10.0.0/firebase-database.js";
 import {
   getAuth,
@@ -37,9 +36,9 @@ const auth = getAuth(app);
 try {
   await signInAnonymously(auth);
 } catch (error) {
-  console.error("Firebase anonymous sign-in failed:", error);
+  console.error("Ha fallat l'inici de sessió anònim a Firebase:", error);
   document.getElementById("messages").textContent =
-    "Could not connect to Firebase. Check that Anonymous sign-in is enabled.";
+    "No ens hem pogut connectar a Firebase. Comprovau que l'accés anònim estigui activat.";
   throw error;
 }
 
@@ -62,8 +61,7 @@ function createPlayerId() {
   return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2)}`;
 }
 
-const playerId = sessionStorage.getItem("trucPlayerId") || createPlayerId();
-sessionStorage.setItem("trucPlayerId", playerId);
+const playerId = createPlayerId();
 let claimingSeat = false;
 let startingGame = false;
 
@@ -74,18 +72,42 @@ function isLobbyReady(players) {
 }
 
 function startGameIfReady(players) {
-  if (startingGame || !isLobbyReady(players)) return;
+  if (myPlayerIndex !== 0 || startingGame || !isLobbyReady(players)) return;
 
   startingGame = true;
   game.start(players).catch((error) => {
     startingGame = false;
-    console.error("Failed to start game:", error);
+    console.error("No s'ha pogut iniciar sa partida:", error);
   });
+}
+
+function updateLobbyMessage(players) {
+  const seatedPlayers = [0, 1, 2, 3].filter((index) => players?.[index]?.name)
+    .length;
+  const message = document.getElementById("messages");
+
+  if (isLobbyReady(players)) {
+    if (myPlayerIndex === null) {
+      message.textContent =
+        "Sa sala és plena. Tancau ses pestanyes antigues o reiniciau sa sala des de sa pestanya de qui l'ha creada.";
+    } else {
+      message.textContent =
+        myPlayerIndex === 0
+          ? "Iniciant sa partida…"
+          : "Tots es jugadors ja hi són. Esperant que comenci sa partida…";
+    }
+  } else if (seatedPlayers === 4) {
+    message.textContent =
+      "Sa sala és plena. Tancau ses pestanyes antigues o reiniciau sa sala des de sa pestanya de qui l'ha creada.";
+  } else {
+    message.textContent = `Esperant es jugadors (${seatedPlayers}/4)…`;
+  }
 }
 
 onValue(playersRef, (snapshot) => {
   const players = snapshot.val() || {};
   roomPlayers = players;
+  updateLobbyMessage(players);
 
   if (Object.keys(players).length === 0 && myPlayerIndex !== null) {
     myPlayerIndex = null;
@@ -94,6 +116,8 @@ onValue(playersRef, (snapshot) => {
     game.dealerIndex = 3;
     game.scoreA = 0;
     game.scoreB = 0;
+    game.pendingBid = null;
+    document.getElementById("reset").hidden = true;
   }
 
   if (myPlayerIndex === null && !claimingSeat) {
@@ -109,7 +133,7 @@ onValue(playersRef, (snapshot) => {
 
       return {
         ...current,
-        [slot]: { name: `Player ${slot + 1}`, id: playerId },
+        [slot]: { name: `Jugador ${slot + 1}`, id: playerId },
       };
     })
       .then(({ snapshot: claimedSnapshot }) => {
@@ -119,18 +143,20 @@ onValue(playersRef, (snapshot) => {
         );
 
         if (ownSlot === undefined) {
-          alert("Room is full!");
+          updateLobbyMessage(claimedPlayers);
           return;
         }
 
         myPlayerIndex = Number(ownSlot);
         myName = claimedPlayers[ownSlot].name;
         roomPlayers = claimedPlayers;
+        document.getElementById("reset").hidden = myPlayerIndex !== 0;
+        updateLobbyMessage(claimedPlayers);
         if (DEBUG_RESET && myPlayerIndex === 0) set(gameRef, null);
         startGameIfReady(claimedPlayers);
       })
       .catch((error) => {
-        console.error("Failed to claim a player seat:", error);
+        console.error("No s'ha pogut reservar un lloc a sa sala:", error);
       })
       .finally(() => {
         claimingSeat = false;
@@ -145,6 +171,10 @@ onValue(playersRef, (snapshot) => {
 // Team B: players 1 and 3
 function teamOf(playerIndex) {
   return playerIndex === 0 || playerIndex === 2 ? "A" : "B";
+}
+
+function otherTeam(team) {
+  return team === "A" ? "B" : "A";
 }
 
 // ---------------- CARD ----------------
@@ -228,25 +258,65 @@ class Player {
   playCard(card) {
     if (game.turnPlayerIndex !== myPlayerIndex) return;
 
-    this.cards = this.cards.filter(
-      (c) => !(c.palo === card.palo && c.num === card.num),
-    );
+    runTransaction(gameRef, (state) => {
+      if (
+        !state ||
+        state.status !== "playing" ||
+        state.pendingBid ||
+        state.turnPlayerIndex !== myPlayerIndex
+      ) {
+        return;
+      }
 
-    game.table.push({ card, playerIndex: this.index });
+      const players = state.players.map((player) => ({
+        ...player,
+        cards: Array.isArray(player.cards) ? [...player.cards] : [],
+      }));
+      const hand = players[myPlayerIndex].cards;
+      const cardIndex = hand.findIndex(
+        (playedCard) =>
+          playedCard.palo === card.palo && playedCard.num === card.num,
+      );
+      if (cardIndex < 0) return;
 
-    update(gameRef, {
-      players: game.players.map((p) => ({
-        name: p.name,
-        index: p.index,
-        cards: p.cards,
-      })),
-      table: game.table,
-      turnPlayerIndex: nextPlayerIndex(game.turnPlayerIndex),
+      hand.splice(cardIndex, 1);
+      const table = [
+        ...(state.table || []),
+        { card, playerIndex: myPlayerIndex },
+      ];
+      const nextState = {
+        ...state,
+        players,
+        table,
+        turnPlayerIndex: nextPlayerIndex(myPlayerIndex),
+      };
+
+      if (table.length % 4 !== 0) return nextState;
+
+      const winnerIndex = getTrickWinner(table.slice(-4));
+      const trickWinners = [
+        ...(state.trickWinners || []),
+        winnerIndex === null ? "tie" : teamOf(winnerIndex),
+      ];
+      const resolvedState = { ...nextState, trickWinners };
+
+      const winner = getHandWinner(trickWinners, state.manoIndex);
+      if (winner) {
+        return awardPoints(
+          resolvedState,
+          winner,
+          state.currentBid || 1,
+          state.bidLevel === "jocfora",
+        );
+      }
+
+      return {
+        ...resolvedState,
+        turnPlayerIndex: winnerIndex ?? state.manoIndex,
+      };
+    }).catch((error) => {
+      console.error("No s'ha pogut jugar sa carta:", error);
     });
-
-    if (game.table.length % 4 === 0) {
-      resolveTrick();
-    }
   }
 }
 
@@ -261,15 +331,13 @@ class Game {
     this.table = [];
     this.trickWinners = [];
     this.currentBid = 1;
-    this.bidLevel = "none"; // none, truc, retruc, volnou, jocfora
-    this.bidTeam = null;
-    this.accepted = true;
+    this.bidLevel = "none";
     this.scoreA = 0;
     this.scoreB = 0;
   }
 
   start(playersFromDB) {
-    console.log("HOST: starting game");
+    console.log("S'inicia sa partida.");
 
     this.deck.fill([2, 8, 9]);
 
@@ -300,65 +368,32 @@ class Game {
       trickWinners: [],
       currentBid: 1,
       bidLevel: "none",
-      bidTeam: null,
-      accepted: true,
+      pendingBid: null,
       scoreA: this.scoreA,
       scoreB: this.scoreB,
+      matchWinner: null,
     };
 
     return runTransaction(gameRef, (currentState) => {
-      if (currentState?.status === "playing") return;
+      if (
+        currentState?.status === "playing" ||
+        currentState?.status === "finished"
+      ) {
+        return;
+      }
       return { ...initialState, status: "playing" };
     });
   }
 
-  nextHand(playersFromDB) {
-    if (!isLobbyReady(playersFromDB)) {
-      return Promise.reject(
-        new Error("Cannot deal next hand: lobby is incomplete."),
-      );
-    }
-
-    this.dealerIndex = nextPlayerIndex(this.dealerIndex);
-    this.manoIndex = nextPlayerIndex(this.dealerIndex);
-    this.turnPlayerIndex = this.manoIndex;
-    this.deck.fill([2, 8, 9]);
-    this.players = Array.from({ length: 4 }, (_, index) => {
-      const player = new Player(playersFromDB[index].name, index);
-      player.getHand(this.deck);
-      return player;
-    });
-    this.table = [];
-    this.trickWinners = [];
-    this.currentBid = 1;
-    this.bidLevel = "none";
-    this.bidTeam = null;
-    this.accepted = true;
-
-    return set(gameRef, {
-      deck: this.deck.cards,
-      players: this.players.map((player) => ({
-        name: player.name,
-        index: player.index,
-        cards: player.cards,
-      })),
-      dealerIndex: this.dealerIndex,
-      manoIndex: this.manoIndex,
-      turnPlayerIndex: this.turnPlayerIndex,
-      table: this.table,
-      trickWinners: this.trickWinners,
-      currentBid: this.currentBid,
-      bidLevel: this.bidLevel,
-      bidTeam: this.bidTeam,
-      accepted: this.accepted,
-      scoreA: this.scoreA,
-      scoreB: this.scoreB,
-      status: "playing",
-    });
-  }
 }
 
 const game = new Game();
+const bidDialog = document.getElementById("bidDialog");
+const bidDialogTitle = document.getElementById("bidDialogTitle");
+const bidDialogMessage = document.getElementById("bidDialogMessage");
+const bidDialogActions = document.getElementById("bidDialogActions");
+const closeBidDialogButton = document.getElementById("closeBidDialog");
+const openBidDialogButton = document.getElementById("openBidDialog");
 
 // ---------------- CARD RANK (Balearic Truc) ----------------
 // You can adjust this mapping to exact local hierarchy.
@@ -399,6 +434,39 @@ function cardRank(card) {
   return rankOrder[key] || 0;
 }
 
+function getTrickWinner(trickCards) {
+  let bestRank = -1;
+  let winnerIndex = null;
+  let tied = false;
+
+  for (const entry of trickCards) {
+    const rank = cardRank(entry.card);
+    if (rank > bestRank) {
+      bestRank = rank;
+      winnerIndex = entry.playerIndex;
+      tied = false;
+    } else if (rank === bestRank) {
+      tied = true;
+    }
+  }
+
+  return tied ? null : winnerIndex;
+}
+
+function getHandWinner(trickWinners, manoIndex) {
+  const winsA = trickWinners.filter((winner) => winner === "A").length;
+  const winsB = trickWinners.filter((winner) => winner === "B").length;
+
+  if (winsA >= 2) return "A";
+  if (winsB >= 2) return "B";
+  if (trickWinners.length < 3) return null;
+  if (winsA > winsB) return "A";
+  if (winsB > winsA) return "B";
+
+  const firstDecisiveTrick = trickWinners.find((winner) => winner !== "tie");
+  return firstDecisiveTrick || teamOf(manoIndex);
+}
+
 // ---------------- TURN ORDER ----------------
 function nextPlayerIndex(i) {
   return (i + 1) % 4;
@@ -411,142 +479,159 @@ function bidValue(level) {
     case "retruc":
       return 6;
     case "volnou":
+    case "valnou":
       return 9;
     case "jocfora":
-      return 999; // whole game
+      return 18;
     default:
       return 1;
   }
 }
 
+const bidLevels = ["none", "truc", "retruc", "valnou", "jocfora"];
+
 function canRaise(level) {
-  const order = ["none", "truc", "retruc", "volnou", "jocfora"];
-  return order.indexOf(level) < order.length - 1;
+  return bidLevels.indexOf(level) < bidLevels.length - 1;
 }
 
 function raiseLevel(level) {
-  const order = ["none", "truc", "retruc", "volnou", "jocfora"];
-  const idx = order.indexOf(level);
-  return order[idx + 1] || "jocfora";
+  const idx = bidLevels.indexOf(level);
+  return bidLevels[idx + 1] || null;
 }
 
-function callTruc(levelName) {
-  if (game.turnPlayerIndex !== myPlayerIndex) return;
-
-  if (!canRaise(game.bidLevel)) return;
-
-  const newLevel = levelName || raiseLevel(game.bidLevel);
-  game.bidLevel = newLevel;
-  game.currentBid = bidValue(newLevel);
-  game.bidTeam = teamOf(myPlayerIndex);
-  game.accepted = false;
-
-  showMessage(`Team ${teamOf(myPlayerIndex)} calls ${newLevel.toUpperCase()}!`);
-
-  update(gameRef, {
-    bidLevel: game.bidLevel,
-    currentBid: game.currentBid,
-    bidTeam: game.bidTeam,
-    accepted: game.accepted,
-  });
+function bidLabel(level) {
+  return {
+    truc: "Truc",
+    retruc: "Retruc",
+    valnou: "Valnou",
+    jocfora: "Joc fora",
+  }[level] || level;
 }
 
-function respondBid(accept) {
-  if (game.bidTeam === null) return;
-  if (teamOf(myPlayerIndex) === game.bidTeam) return;
+function placeBid(level) {
+  runTransaction(gameRef, (state) => {
+    if (!state || state.status !== "playing") return;
 
-  if (!accept) {
-    endHandByBid(false);
-    showMessage(`Team ${teamOf(myPlayerIndex)} does NOT accept!`);
-    return;
-  }
-
-  game.accepted = true;
-
-  showMessage(`Team ${teamOf(myPlayerIndex)} accepts!`);
-
-  update(gameRef, {
-    accepted: game.accepted,
-  });
-}
-
-// ---------------- TRICK RESOLUTION ----------------
-function resolveTrick() {
-  if (game.table.length % 4 !== 0) return;
-
-  const trickCards = game.table.slice(game.table.length - 4);
-  let bestRank = -1;
-  let winnerIndex = null;
-  let tie = false;
-
-  for (let entry of trickCards) {
-    const r = cardRank(entry.card);
-    if (r > bestRank) {
-      bestRank = r;
-      winnerIndex = entry.playerIndex;
-      tie = false;
-    } else if (r === bestRank) {
-      tie = true;
+    const pendingBid = state.pendingBid;
+    if (pendingBid) {
+      if (pendingBid.responderTeam !== teamOf(myPlayerIndex)) return;
+    } else if (state.turnPlayerIndex !== myPlayerIndex) {
+      return;
     }
-  }
 
-  if (tie) {
-    game.trickWinners.push("tie");
-    showMessage(`Team ${teamOf(winnerIndex)} wins the trick!`);
-  } else {
-    game.trickWinners.push(teamOf(winnerIndex));
-    showMessage(`Tie! Mano decides next trick.`);
-  }
+    if (raiseLevel(pendingBid?.level || state.bidLevel) !== level) return;
 
-  update(gameRef, {
-    trickWinners: game.trickWinners,
-  });
-
-  if (game.trickWinners.length === 3) {
-    endHandByPlay();
-  } else {
-    game.turnPlayerIndex = winnerIndex;
-    update(gameRef, {
-      turnPlayerIndex: game.turnPlayerIndex,
-    });
-  }
-}
-
-// ---------------- END HAND ----------------
-function endHandByBid(fromPlay) {
-  const winningTeam = game.bidTeam;
-  const points = game.currentBid;
-
-  if (winningTeam === "A") game.scoreA += points;
-  else game.scoreB += points;
-
-  showMessage(`Team ${winningTeam} wins the bid (${points} points)!`);
-
-  game.nextHand(roomPlayers).catch((error) => {
-    console.error("Failed to deal the next hand:", error);
+    return {
+      ...state,
+      pendingBid: {
+        level,
+        team: teamOf(myPlayerIndex),
+        actorIndex: myPlayerIndex,
+        responderTeam: otherTeam(teamOf(myPlayerIndex)),
+      },
+    };
+  }).then(({ committed }) => {
+    if (committed) bidDialog.close();
+  }).catch((error) => {
+    console.error("No s'ha pogut fer s'aposta:", error);
   });
 }
 
-function endHandByPlay() {
-  const t = game.trickWinners;
-  let winningTeam;
+function dealNextHandState(state) {
+  const deck = new Deck();
+  deck.fill([2, 8, 9]);
+  const players = Array.from({ length: 4 }, (_, index) => {
+    const player = new Player(roomPlayers[index].name, index);
+    player.getHand(deck);
+    return { name: player.name, index, cards: player.cards };
+  });
+  const dealerIndex = nextPlayerIndex(state.dealerIndex);
 
-  const countA = t.filter((x) => x === "A").length;
-  const countB = t.filter((x) => x === "B").length;
+  return {
+    ...state,
+    deck: deck.cards,
+    players,
+    dealerIndex,
+    manoIndex: nextPlayerIndex(dealerIndex),
+    turnPlayerIndex: nextPlayerIndex(dealerIndex),
+    table: [],
+    trickWinners: [],
+    currentBid: 1,
+    bidLevel: "none",
+    pendingBid: null,
+    status: "playing",
+    matchWinner: null,
+  };
+}
 
-  if (countA > countB) winningTeam = "A";
-  else if (countB > countA) winningTeam = "B";
-  else winningTeam = teamOf(game.manoIndex);
+function awardPoints(state, team, points, forceMatchWinner = false) {
+  const scoreKey = team === "A" ? "scoreA" : "scoreB";
+  const score = (state[scoreKey] || 0) + points;
+  const updatedState = { ...state, [scoreKey]: score, pendingBid: null };
 
-  const points = game.currentBid;
+  if (forceMatchWinner || score >= 18) {
+    return {
+      ...updatedState,
+      [scoreKey]: 18,
+      status: "finished",
+      matchWinner: team,
+    };
+  }
 
-  if (winningTeam === "A") game.scoreA += points;
-  else game.scoreB += points;
+  return dealNextHandState(updatedState);
+}
 
-  showMessage(`Team ${winningTeam} wins the hand (${points} points)!`);
+function respondToBid(action) {
+  runTransaction(gameRef, (state) => {
+    const pendingBid = state?.pendingBid;
+    if (
+      !state ||
+      state.status !== "playing" ||
+      !pendingBid ||
+      pendingBid.responderTeam !== teamOf(myPlayerIndex)
+    ) {
+      return;
+    }
 
-  game.nextHand(roomPlayers).catch((error) => {
-    console.error("Failed to deal the next hand:", error);
+    if (action === "raise") {
+      const level = raiseLevel(pendingBid.level);
+      if (!level) return;
+      return {
+        ...state,
+        pendingBid: {
+          level,
+          team: teamOf(myPlayerIndex),
+          actorIndex: myPlayerIndex,
+          responderTeam: otherTeam(teamOf(myPlayerIndex)),
+        },
+      };
+    }
+
+    if (action === "accept") {
+      return {
+        ...state,
+        currentBid: bidValue(pendingBid.level),
+        bidLevel: pendingBid.level,
+        turnPlayerIndex: nextPlayerIndex(pendingBid.actorIndex),
+        pendingBid: null,
+      };
+    }
+
+    if (action === "decline") {
+      if (pendingBid.level === "jocfora") {
+        return awardPoints(state, pendingBid.team, 18, true);
+      }
+
+      const previousLevel =
+        bidLevels[bidLevels.indexOf(pendingBid.level) - 1] || "none";
+      return awardPoints(
+        state,
+        pendingBid.team,
+        bidValue(previousLevel),
+      );
+    }
+  }).catch((error) => {
+    console.error("No s'ha pogut respondre a s'aposta:", error);
   });
 }
 
@@ -554,7 +639,33 @@ function endHandByPlay() {
 onValue(gameRef, (snapshot) => {
   const state = snapshot.val();
 
-  if (!state) return;
+  if (!state) {
+    openBidDialogButton.hidden = true;
+    if (bidDialog.open) bidDialog.close();
+    document.getElementById("scoreA").textContent = "0";
+    document.getElementById("scoreB").textContent = "0";
+    for (const id of [
+      "nameTop",
+      "nameLeft",
+      "nameRight",
+      "nameBottom",
+      "labelTop",
+      "labelLeft",
+      "labelRight",
+      "labelBottom",
+    ]) {
+      document.getElementById(id).textContent = "";
+    }
+    for (const id of ["pTop", "pLeft", "pRight", "main"]) {
+      document.getElementById(id).classList.remove("activePlayer", "hostPlayer");
+    }
+    document.getElementById("mainCards").replaceChildren();
+    document.getElementById("tableCards").replaceChildren();
+    document.getElementById("pTopCards").replaceChildren();
+    document.getElementById("pLeftCards").replaceChildren();
+    document.getElementById("pRightCards").replaceChildren();
+    return;
+  }
 
   if (
     !Number.isInteger(myPlayerIndex) ||
@@ -570,6 +681,7 @@ onValue(gameRef, (snapshot) => {
     (_, index) => state.players[index],
   );
   if (playerStates.some((player) => !player)) return;
+  document.getElementById("messages").textContent = "";
 
   game.deck.cards = state.deck;
 
@@ -585,9 +697,11 @@ onValue(gameRef, (snapshot) => {
   game.table = state.table || [];
   game.trickWinners = state.trickWinners || [];
   game.currentBid = state.currentBid || 1;
-  game.bidLevel = state.bidLevel || "none";
-  game.bidTeam = state.bidTeam || null;
-  game.accepted = state.accepted ?? true;
+  game.bidLevel =
+    state.bidLevel === "volnou" ? "valnou" : state.bidLevel || "none";
+  game.pendingBid = state.pendingBid || null;
+  game.status = state.status || "playing";
+  game.matchWinner = state.matchWinner || null;
   game.scoreA = state.scoreA || 0;
   game.scoreB = state.scoreB || 0;
 
@@ -601,6 +715,101 @@ onValue(gameRef, (snapshot) => {
   highlightActivePlayer();
   updateLabels();
   updateNames();
+  updateBidControls(state);
+
+  if (state.status === "finished" && state.matchWinner) {
+    document.getElementById("messages").textContent =
+      `S'equip ${state.matchWinner} ha guanyat es joc!`;
+  }
+});
+
+function addBidDialogAction(label, action) {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.textContent = label;
+  button.addEventListener("click", action, { once: true });
+  bidDialogActions.appendChild(button);
+}
+
+function updateBidControls(state) {
+  const pendingBid = state.pendingBid || null;
+  const canStartBid =
+    state.status === "playing" &&
+    !pendingBid &&
+    state.turnPlayerIndex === myPlayerIndex &&
+    canRaise(state.bidLevel || "none");
+  const isResponder =
+    pendingBid?.responderTeam === teamOf(myPlayerIndex);
+
+  openBidDialogButton.hidden = !canStartBid;
+  closeBidDialogButton.hidden = Boolean(isResponder);
+
+  if (state.status !== "playing") {
+    if (bidDialog.open) bidDialog.close();
+    return;
+  }
+
+  if (isResponder) {
+    bidDialogTitle.textContent = `${bidLabel(pendingBid.level)}!`;
+    bidDialogMessage.textContent =
+      `S'equip ${pendingBid.team} ha dit ${bidLabel(pendingBid.level)} i posa s'aposta a ${bidValue(pendingBid.level)} punts. ` +
+      "Podeu acceptar, rebutjar o pujar al nivell següent.";
+    bidDialogActions.replaceChildren();
+    addBidDialogAction("Acceptar", () => respondToBid("accept"));
+
+    const previousLevel =
+      bidLevels[bidLevels.indexOf(pendingBid.level) - 1] || "none";
+    const declinedPoints = bidValue(previousLevel);
+    addBidDialogAction(
+      pendingBid.level === "jocfora"
+        ? "Rebutjar (perdre es joc)"
+        : `Rebutjar (${declinedPoints} ${declinedPoints === 1 ? "punt" : "punts"})`,
+      () => respondToBid("decline"),
+    );
+
+    const nextLevel = raiseLevel(pendingBid.level);
+    if (nextLevel) {
+      addBidDialogAction(`Pujar a ${bidLabel(nextLevel)}`, () =>
+        respondToBid("raise"),
+      );
+    }
+
+    if (!bidDialog.open) bidDialog.showModal();
+    return;
+  }
+
+  if (pendingBid) {
+    if (bidDialog.open) bidDialog.close();
+    return;
+  }
+
+  if (bidDialog.open) {
+    const nextLevel = raiseLevel(state.bidLevel || "none");
+    bidDialogTitle.textContent = "Fer una aposta";
+    bidDialogMessage.textContent =
+      `S'aposta següent és ${bidLabel(nextLevel)} (${bidValue(nextLevel)} ${bidValue(nextLevel) === 1 ? "punt" : "punts"}).`;
+    bidDialogActions.replaceChildren();
+    addBidDialogAction(`Dir ${bidLabel(nextLevel)}`, () =>
+      placeBid(nextLevel),
+    );
+  }
+}
+
+openBidDialogButton.addEventListener("click", () => {
+  if (!bidDialog.open) bidDialog.showModal();
+  updateBidControls({
+    status: game.status || "playing",
+    pendingBid: game.pendingBid,
+    turnPlayerIndex: game.turnPlayerIndex,
+    bidLevel: game.bidLevel,
+  });
+});
+
+closeBidDialogButton.addEventListener("click", () => bidDialog.close());
+bidDialog.addEventListener("cancel", (event) => {
+  if (game.pendingBid?.responderTeam === teamOf(myPlayerIndex)) {
+    event.preventDefault();
+  }
 });
 
 // ---------------- RENDER FUNCTIONS ----------------
@@ -684,12 +893,12 @@ function updateLabels() {
     const relative = (i - myPlayerIndex + 4) % 4;
     const pos = seat[relative];
 
-    if (i === game.manoIndex) labels[pos].textContent = "MANO";
+    if (i === game.manoIndex) labels[pos].textContent = "MÀ";
     if (i === nextPlayerIndex(game.manoIndex)) labels[pos].textContent = "PEU";
     if (i === game.dealerIndex)
       labels[pos].textContent =
         (labels[pos].textContent ? labels[pos].textContent + " · " : "") +
-        "DEALER";
+        "REPARTIDOR";
   }
 }
 
@@ -760,30 +969,17 @@ function highlightActivePlayer() {
   }
 }
 
-function showMessage(text) {
-  const msg = document.getElementById("messages");
-  msg.textContent = text;
-
-  setTimeout(() => {
-    msg.textContent = "";
-  }, 3000);
-}
-
 document.getElementById("reset").onclick = () => {
   if (myPlayerIndex === 0) {
     set(roomRef, null).catch((error) => {
-      console.error("Failed to reset the room:", error);
+      console.error("No s'ha pogut reiniciar sa sala:", error);
     });
   }
 };
 
 console.log(
-  "App initialized. Player ID:",
+  "Aplicació iniciada. Identificador de jugador:",
   playerId,
-  "Player Index:",
+  "Lloc de jugador:",
   myPlayerIndex,
 );
-
-// expose bidding functions for HTML buttons if you add them
-window.callBid = callTruc;
-window.respondBid = respondBid;
