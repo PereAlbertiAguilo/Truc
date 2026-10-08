@@ -22,10 +22,17 @@ export function createGameView({
   onPlayCard,
   onPlaceBid,
   onRespondToBid,
+  onCallEnvit,
+  onRespondToEnvit,
+  onContinueHand,
 }) {
   const elements = {
     scoreA: document.getElementById("scoreA"),
     scoreB: document.getElementById("scoreB"),
+    handBidA: document.getElementById("handBidA"),
+    handBidB: document.getElementById("handBidB"),
+    raiseStatusA: document.getElementById("raiseStatusA"),
+    raiseStatusB: document.getElementById("raiseStatusB"),
     messages: document.getElementById("messages"),
     gameEvents: document.getElementById("gameEvents"),
     tableCards: document.getElementById("tableCards"),
@@ -59,6 +66,7 @@ export function createGameView({
     bidDialogActions: document.getElementById("bidDialogActions"),
     closeBidDialog: document.getElementById("closeBidDialog"),
     openBidDialog: document.getElementById("openBidDialog"),
+    continueHand: document.getElementById("continueHand"),
   };
   const seenGameEventIds = new Set();
   let gameEventHistoryInitialized = false;
@@ -75,7 +83,11 @@ export function createGameView({
     }
 
     const playerIndex = getPlayerIndex();
-    if ((!Number.isInteger(playerIndex) && !getIsSpectator()) || !state.players) {
+    if (!state.players) {
+      clearGame();
+      return;
+    }
+    if (!Number.isInteger(playerIndex) && !getIsSpectator()) {
       return;
     }
 
@@ -83,10 +95,13 @@ export function createGameView({
       { length: 4 },
       (_, index) => state.players[index],
     );
-    if (playerStates.some((player) => !player)) return;
+    if (playerStates.some((player) => !player)) {
+      clearGame();
+      return;
+    }
     updateGameMessage();
     syncGameState(state, playerStates);
-    renderScore();
+    renderScore(state);
     renderMainHand();
     renderOtherHands();
     renderTable();
@@ -96,17 +111,39 @@ export function createGameView({
     updateBidControls(state);
 
     if (state.status === "finished" && state.matchWinner) {
+      elements.messages.textContent = `L'equip ${state.matchWinner} ha guanyat el joc!`;
+    } else if (
+      state.status === "playing" &&
+      state.handComplete &&
+      !hasLegacySeats(getRoomPlayers())
+    ) {
       elements.messages.textContent =
-        `L'equip ${state.matchWinner} ha guanyat el joc!`;
+        state.manoIndex === playerIndex
+          ? "MÀ, prem «Continua» per repartir la mà següent."
+          : "Esperant que MÀ continuï la partida.";
     }
   }
 
   function clearGame() {
     elements.openBidDialog.hidden = true;
+    elements.continueHand.hidden = true;
     if (elements.bidDialog.open) elements.bidDialog.close();
     elements.gameEvents.replaceChildren();
     elements.scoreA.textContent = "0";
     elements.scoreB.textContent = "0";
+    elements.handBidA.textContent = "1 punt · Sense aposta";
+    elements.handBidB.textContent = "1 punt · Sense aposta";
+    elements.raiseStatusA.textContent = "—";
+    elements.raiseStatusB.textContent = "—";
+    game.scoreA = 0;
+    game.scoreB = 0;
+    game.currentBid = 1;
+    game.bidLevel = "none";
+    game.nextBidTeam = null;
+    game.envitStatus = "available";
+    game.pendingEnvit = null;
+    game.pendingBid = null;
+    game.handComplete = false;
 
     for (const element of Object.values(elements.names)) {
       element.textContent = "";
@@ -186,16 +223,61 @@ export function createGameView({
     game.currentBid = state.currentBid || 1;
     game.bidLevel =
       state.bidLevel === "volnou" ? "valnou" : state.bidLevel || "none";
+    game.nextBidTeam = state.nextBidTeam || null;
+    game.envitStatus = state.envitStatus || "available";
+    game.pendingEnvit = state.pendingEnvit || null;
     game.pendingBid = state.pendingBid || null;
+    game.handComplete = state.handComplete === true;
     game.status = state.status || "playing";
     game.matchWinner = state.matchWinner || null;
     game.scoreA = state.scoreA || 0;
     game.scoreB = state.scoreB || 0;
   }
 
-  function renderScore() {
+  function renderScore(state) {
     elements.scoreA.textContent = game.scoreA;
     elements.scoreB.textContent = game.scoreB;
+
+    const pendingBid = state.pendingBid || null;
+    const currentLevel = pendingBid?.level || game.bidLevel || "none";
+    const handPoints = pendingBid
+      ? bidValue(pendingBid.level)
+      : game.currentBid || 1;
+    const levelLabel =
+      currentLevel === "none" ? "Sense aposta" : bidLabel(currentLevel);
+    const handSummary = `${handPoints} ${handPoints === 1 ? "punt" : "punts"} · ${levelLabel}`;
+    elements.handBidA.textContent = handSummary;
+    elements.handBidB.textContent = handSummary;
+
+    let raisePlayerIndex = null;
+    if (state.status === "playing" && pendingBid) {
+      if (raiseLevel(pendingBid.level)) {
+        raisePlayerIndex =
+          pendingBid.responderIndex ?? nextPlayerIndex(pendingBid.actorIndex);
+      }
+    } else if (
+      state.status === "playing" &&
+      !state.pendingEnvit &&
+      raiseLevel(currentLevel) &&
+      Number.isInteger(state.turnPlayerIndex) &&
+      (!state.nextBidTeam ||
+        state.nextBidTeam === teamOf(state.turnPlayerIndex))
+    ) {
+      raisePlayerIndex = state.turnPlayerIndex;
+    }
+
+    for (const team of ["A", "B"]) {
+      const statusElement =
+        team === "A" ? elements.raiseStatusA : elements.raiseStatusB;
+      if (raisePlayerIndex === null) {
+        statusElement.textContent = "Ningú ara";
+      } else if (teamOf(raisePlayerIndex) === team) {
+        statusElement.textContent =
+          game.players[raisePlayerIndex]?.name || `Equip ${team}`;
+      } else {
+        statusElement.textContent = "No li toca";
+      }
+    }
   }
 
   function renderMainHand() {
@@ -243,8 +325,7 @@ export function createGameView({
     for (const entry of game.table) {
       const cardImage = document.createElement("img");
       cardImage.classList.add("card");
-      cardImage.src =
-        `cards/${entry.card.palo}/${entry.card.num}${entry.card.palo}.png`;
+      cardImage.src = `cards/${entry.card.palo}/${entry.card.num}${entry.card.palo}.png`;
       elements.tableCards.appendChild(cardImage);
     }
   }
@@ -257,14 +338,9 @@ export function createGameView({
     const viewerIndex = viewerPlayerIndex();
     for (let index = 0; index < 4; index++) {
       const position = playerPositions[(index - viewerIndex + 4) % 4];
-      if (index === game.manoIndex) elements.labels[position].textContent = "MÀ";
-      if (index === nextPlayerIndex(game.manoIndex)) {
-        elements.labels[position].textContent = "PEU";
-      }
-      if (index === game.dealerIndex) {
-        const label = elements.labels[position];
-        label.textContent = `${label.textContent ? `${label.textContent} · ` : ""}REPARTIDOR`;
-      }
+      const playerLabels = [`EQUIP ${teamOf(index)}`];
+      if (index === game.manoIndex) playerLabels.push("MÀ");
+      elements.labels[position].textContent = playerLabels.join(" · ");
     }
   }
 
@@ -304,6 +380,12 @@ export function createGameView({
 
   function updateBidControls(state) {
     const playerIndex = getPlayerIndex();
+    const canContinue =
+      state.status === "playing" &&
+      state.handComplete === true &&
+      state.manoIndex === playerIndex;
+    elements.continueHand.hidden = !canContinue;
+
     if (!Number.isInteger(playerIndex)) {
       elements.openBidDialog.hidden = true;
       elements.closeBidDialog.hidden = true;
@@ -312,50 +394,118 @@ export function createGameView({
     }
 
     const pendingBid = state.pendingBid || null;
+    const pendingEnvit = state.pendingEnvit || null;
+    const canCallEnvit =
+      state.status === "playing" &&
+      !state.handComplete &&
+      !pendingBid &&
+      !pendingEnvit &&
+      (!state.envitStatus || state.envitStatus === "available") &&
+      (state.trickWinners || []).length === 0 &&
+      (state.table || []).length < 4 &&
+      state.turnPlayerIndex === playerIndex;
     const canStartBid =
       state.status === "playing" &&
+      !state.handComplete &&
       !pendingBid &&
+      !pendingEnvit &&
       state.turnPlayerIndex === playerIndex &&
+      (!state.nextBidTeam || state.nextBidTeam === teamOf(playerIndex)) &&
       canRaise(state.bidLevel || "none");
-    const isResponder =
-      pendingBid?.responderTeam === teamOf(playerIndex);
+    const isBidResponder =
+      pendingBid &&
+      (pendingBid.responderIndex ?? nextPlayerIndex(pendingBid.actorIndex)) ===
+        playerIndex;
+    const isEnvitResponder = pendingEnvit?.responderIndex === playerIndex;
 
-    elements.openBidDialog.hidden = !canStartBid;
-    elements.closeBidDialog.hidden = Boolean(isResponder);
+    elements.openBidDialog.hidden = !canStartBid && !canCallEnvit;
+    elements.openBidDialog.textContent = canCallEnvit
+      ? canStartBid
+        ? "Truc / Envida"
+        : "Envida"
+      : "Fer una aposta";
+    elements.closeBidDialog.hidden = Boolean(
+      isBidResponder || isEnvitResponder,
+    );
 
     if (state.status !== "playing") {
       if (elements.bidDialog.open) elements.bidDialog.close();
       return;
     }
 
-    if (isResponder) {
+    if (isEnvitResponder) {
+      renderEnvitResponse(pendingEnvit);
+      return;
+    }
+
+    if (isBidResponder) {
       renderBidResponse(pendingBid);
       return;
     }
 
-    if (pendingBid) {
+    if (pendingBid || pendingEnvit) {
+      if (elements.bidDialog.open) elements.bidDialog.close();
+      return;
+    }
+
+    if (!canStartBid && !canCallEnvit) {
       if (elements.bidDialog.open) elements.bidDialog.close();
       return;
     }
 
     if (elements.bidDialog.open) {
-      const nextLevel = raiseLevel(state.bidLevel || "none");
-      elements.bidDialogTitle.textContent = "Fer una aposta";
-      const points = bidValue(nextLevel);
-      elements.bidDialogMessage.textContent =
-        `La següent aposta és ${bidLabel(nextLevel)} (${points} ${points === 1 ? "punt" : "punts"}).`;
-      elements.bidDialogActions.replaceChildren();
-      addBidDialogAction(`Dir ${bidLabel(nextLevel)}`, () =>
-        onPlaceBid(nextLevel),
-      );
+      renderBidChoices(state, canStartBid, canCallEnvit);
     }
+  }
+
+  function renderBidChoices(state, canStartBid, canCallEnvit) {
+    elements.bidDialogTitle.textContent = "Apostes";
+    elements.bidDialogMessage.textContent =
+      "Tria si vols pujar el truc o cantar envit abans de jugar la carta.";
+    elements.bidDialogActions.replaceChildren();
+
+    if (canStartBid) {
+      const nextLevel = raiseLevel(state.bidLevel || "none");
+      if (nextLevel) {
+        const points = bidValue(nextLevel);
+        addBidDialogAction(
+          `Dir ${bidLabel(nextLevel)} (${points} ${points === 1 ? "punt" : "punts"})`,
+          () => onPlaceBid(nextLevel),
+        );
+      }
+    }
+    if (canCallEnvit) {
+      addBidDialogAction("Envida", onCallEnvit);
+    }
+  }
+
+  function renderEnvitResponse(pendingEnvit) {
+    const raised = pendingEnvit.level === "jo-envit";
+    elements.bidDialogTitle.textContent = raised ? "Jo envit!" : "Envida!";
+    elements.bidDialogMessage.textContent = raised
+      ? `L'equip ${pendingEnvit.team} ha apujat l'envit. S'hi juguen quatre punts si s'accepta.`
+      : `L'equip ${pendingEnvit.team} ha envidat. Pots acceptar per dos punts, rebutjar o pujar a quatre.`;
+    elements.bidDialogActions.replaceChildren();
+    const acceptedPoints = raised ? 4 : 2;
+    const declinedPoints = raised ? 2 : 1;
+    addBidDialogAction(`Vull (${acceptedPoints} punts)`, () =>
+      onRespondToEnvit("accept"),
+    );
+    addBidDialogAction(
+      `No volem (${declinedPoints} ${declinedPoints === 1 ? "punt" : "punts"})`,
+      () => onRespondToEnvit("decline"),
+    );
+    if (!raised) {
+      addBidDialogAction("Jo envit", () => onRespondToEnvit("raise"));
+    }
+    if (!elements.bidDialog.open) elements.bidDialog.showModal();
   }
 
   function renderBidResponse(pendingBid) {
     elements.bidDialogTitle.textContent = `${bidLabel(pendingBid.level)}!`;
     elements.bidDialogMessage.textContent =
       `L'equip ${pendingBid.team} ha cantat ${bidLabel(pendingBid.level)} per ${bidValue(pendingBid.level)} punts. ` +
-      "L'equip contrari pot acceptar l'aposta, rebutjar-la o apujar-la.";
+      "L'equip contrari pot acceptar l'aposta, rebutjar-la o pujar-la.";
     elements.bidDialogActions.replaceChildren();
     addBidDialogAction("Acceptar", () => onRespondToBid("accept"));
 
@@ -371,7 +521,7 @@ export function createGameView({
 
     const nextLevel = raiseLevel(pendingBid.level);
     if (nextLevel) {
-      addBidDialogAction(`Apujar a ${bidLabel(nextLevel)}`, () =>
+      addBidDialogAction(`Pujar a ${bidLabel(nextLevel)}`, () =>
         onRespondToBid("raise"),
       );
     }
@@ -380,23 +530,45 @@ export function createGameView({
   }
 
   elements.openBidDialog.addEventListener("click", () => {
-    if (!elements.bidDialog.open) elements.bidDialog.showModal();
     updateBidControls({
       status: game.status || "playing",
       pendingBid: game.pendingBid,
       turnPlayerIndex: game.turnPlayerIndex,
       bidLevel: game.bidLevel,
+      nextBidTeam: game.nextBidTeam,
+      envitStatus: game.envitStatus,
+      pendingEnvit: game.pendingEnvit,
+      trickWinners: game.trickWinners,
+      table: game.table,
     });
+    if (!elements.openBidDialog.hidden && !elements.bidDialog.open) {
+      elements.bidDialog.showModal();
+      updateBidControls({
+        status: game.status || "playing",
+        pendingBid: game.pendingBid,
+        turnPlayerIndex: game.turnPlayerIndex,
+        bidLevel: game.bidLevel,
+        nextBidTeam: game.nextBidTeam,
+        envitStatus: game.envitStatus,
+        pendingEnvit: game.pendingEnvit,
+        trickWinners: game.trickWinners,
+        table: game.table,
+      });
+    }
   });
 
   elements.closeBidDialog.addEventListener("click", () =>
     elements.bidDialog.close(),
   );
+  elements.continueHand.addEventListener("click", onContinueHand);
   elements.bidDialog.addEventListener("cancel", (event) => {
     const playerIndex = getPlayerIndex();
     if (
       Number.isInteger(playerIndex) &&
-      game.pendingBid?.responderTeam === teamOf(playerIndex)
+      ((game.pendingBid &&
+        (game.pendingBid.responderIndex ??
+          nextPlayerIndex(game.pendingBid.actorIndex)) === playerIndex) ||
+        game.pendingEnvit?.responderIndex === playerIndex)
     ) {
       event.preventDefault();
     }

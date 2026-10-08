@@ -8,8 +8,30 @@
   </head>
   <body>
     <div id="scoreboard">
-      <div class="teamScore">Equip A <span id="scoreA">0</span></div>
-      <div class="teamScore">Equip B <span id="scoreB">0</span></div>
+      <section class="teamScore" aria-label="Marcador de l'equip A">
+        <div class="teamScoreHeading">
+          <h2>Equip A</h2>
+          <span class="matchScore"
+            ><span id="scoreA">0</span><small>/ 18</small></span
+          >
+        </div>
+        <p class="handBid">
+          En joc: <span id="handBidA">1 punt · Sense aposta</span>
+        </p>
+        <p class="raiseStatus">Pot pujar: <span id="raiseStatusA">—</span></p>
+      </section>
+      <section class="teamScore" aria-label="Marcador de l'equip B">
+        <div class="teamScoreHeading">
+          <h2>Equip B</h2>
+          <span class="matchScore"
+            ><span id="scoreB">0</span><small>/ 18</small></span
+          >
+        </div>
+        <p class="handBid">
+          En joc: <span id="handBidB">1 punt · Sense aposta</span>
+        </p>
+        <p class="raiseStatus">Pot pujar: <span id="raiseStatusB">—</span></p>
+      </section>
       <div id="spectatorStatus" aria-live="polite">Espectadors: 0/4</div>
     </div>
 
@@ -51,6 +73,7 @@
     </div>
 
     <button id="openBidDialog" type="button" hidden>Fer una aposta</button>
+    <button id="continueHand" type="button" hidden>Continua</button>
     <dialog id="bidDialog" aria-labelledby="bidDialogTitle">
       <h2 id="bidDialogTitle">Aposta</h2>
       <p id="bidDialogMessage"></p>

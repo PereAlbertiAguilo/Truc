@@ -23,6 +23,18 @@ export function formatGameEvent(event) {
       return `L'equip ${event.acceptingTeam} ha acceptat ${bidLabel(event.level)}. La mà val ${formatPoints(event.points)}.`;
     case "bid-declined":
       return `L'equip ${event.decliningTeam} ha rebutjat ${bidLabel(event.level)}. L'equip ${event.team} guanya ${formatPoints(event.points)}.`;
+    case "envit-called":
+      return `L'equip ${event.team} ha dit «Envida».`;
+    case "envit-raised":
+      return `L'equip ${event.team} ha dit «Jo envit»: es juguen quatre punts.`;
+    case "envit-answered":
+      return event.answer === "accept"
+        ? `L'equip ${event.team} ha dit «Vull».`
+        : event.answer === "decline"
+          ? `L'equip ${event.team} ha dit «No volem».`
+          : "";
+    case "envit-resolved":
+      return `L'equip ${event.team} guanya l'envit i suma ${formatPoints(event.points)}.`;
     case "hand-won":
       return `L'equip ${event.team} guanya la mà i suma ${formatPoints(event.points)}.`;
     case "game-won":

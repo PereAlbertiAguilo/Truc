@@ -7,7 +7,12 @@
 :root {
   color-scheme: dark;
   font-family:
-    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    Inter,
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
     sans-serif;
   background: #101612;
   color: #f4f1e8;
@@ -27,44 +32,91 @@ body {
   gap: clamp(12px, 2vh, 20px);
   overflow: hidden;
   background:
-    radial-gradient(ellipse at 50% 45%, rgba(59, 83, 57, 0.28), transparent 65%),
+    radial-gradient(
+      ellipse at 50% 45%,
+      rgba(59, 83, 57, 0.28),
+      transparent 65%
+    ),
     #101612;
 }
 
 #scoreboard {
-  display: flex;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
   justify-content: center;
-  flex-wrap: wrap;
-  gap: clamp(12px, 4vw, 36px);
+  gap: 10px;
   color: #d8ddce;
-  font-size: clamp(13px, 2vw, 17px);
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: clamp(12px, 1.5vw, 15px);
 }
 
 #spectatorStatus {
+  grid-column: 1 / -1;
+  justify-self: center;
   color: #aebbaa;
   font-size: 0.8em;
   letter-spacing: 0.02em;
 }
 
 .teamScore {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  min-width: 112px;
-  justify-content: space-between;
+  min-width: 0;
+  display: grid;
+  gap: 4px;
   padding: 8px 12px;
   border: 1px solid rgba(226, 230, 212, 0.12);
   border-radius: 10px;
   background: rgba(255, 255, 255, 0.035);
 }
 
-.teamScore span {
-  min-width: 2ch;
+.teamScoreHeading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.teamScoreHeading h2 {
+  margin: 0;
+  font-size: 0.95em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+
+.matchScore {
   color: #f4d893;
+  font-size: 1.1em;
+  font-weight: 750;
   font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.matchScore small {
+  margin-left: 2px;
+  color: #aebbaa;
+  font-size: 0.7em;
+  font-weight: 500;
+}
+
+.teamScore p {
+  margin: 0;
+  overflow: hidden;
+  color: #aebbaa;
+  font-size: 0.78em;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.teamScore p span {
+  min-width: 2ch;
+  color: #f4f1e8;
+  font-weight: 600;
+}
+
+.teamScore:nth-of-type(2) .teamScoreHeading {
+  flex-direction: row-reverse;
+}
+
+.teamScore:nth-of-type(2) p {
   text-align: right;
 }
 
@@ -81,7 +133,11 @@ body {
   border: 1px solid rgba(221, 194, 139, 0.28);
   border-radius: clamp(24px, 5vw, 56px);
   background:
-    radial-gradient(ellipse at center, rgba(50, 91, 54, 0.97), rgba(25, 54, 37, 0.98)),
+    radial-gradient(
+      ellipse at center,
+      rgba(50, 91, 54, 0.97),
+      rgba(25, 54, 37, 0.98)
+    ),
     #1b3a29;
   box-shadow:
     inset 0 0 0 7px rgba(8, 21, 15, 0.28),
@@ -237,6 +293,10 @@ body {
   pointer-events: none;
 }
 
+#messages:empty {
+  display: none;
+}
+
 #gameEvents {
   position: fixed;
   z-index: 7;
@@ -312,6 +372,7 @@ button:focus-visible {
 }
 
 #openBidDialog,
+#continueHand,
 .game-controls {
   position: fixed;
   z-index: 6;
@@ -322,6 +383,22 @@ button:focus-visible {
   left: max(14px, env(safe-area-inset-left));
   background: #d8bf83;
   color: #18251b;
+}
+
+#continueHand {
+  left: 50%;
+  transform: translateX(-50%);
+  border-color: rgba(241, 210, 141, 0.72);
+  background: #d8bf83;
+  color: #18251b;
+}
+
+#continueHand:hover {
+  background: #ecd89e;
+}
+
+#continueHand:active {
+  transform: translate(-50%, 1px);
 }
 
 .game-controls {
@@ -430,6 +507,7 @@ button:focus-visible {
 
   .teamScore {
     padding-block: 4px;
+    gap: 2px;
   }
 
   .playerName {

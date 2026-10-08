@@ -3,6 +3,8 @@ import {
   bidLabel,
   bidLevels,
   bidValue,
+  getEnvitValue,
+  getEnvitWinner,
   getHandWinner,
   getTrickWinner,
   nextPlayerIndex,
@@ -586,6 +588,8 @@ class Game {
   start(playersFromDB) {
     console.log("S'inicia la partida.");
 
+    this.scoreA = 0;
+    this.scoreB = 0;
     this.deck.fill([2, 8, 9]);
 
     this.players = [];
@@ -615,7 +619,11 @@ class Game {
       trickWinners: [],
       currentBid: 1,
       bidLevel: "none",
+      envitStatus: "available",
+      pendingEnvit: null,
+      envitOutcome: null,
       pendingBid: null,
+      handComplete: false,
       scoreA: this.scoreA,
       scoreB: this.scoreB,
       matchWinner: null,
@@ -651,6 +659,9 @@ const gameView = createGameView({
   onPlayCard: playCard,
   onPlaceBid: placeBid,
   onRespondToBid: respondToBid,
+  onCallEnvit: callEnvit,
+  onRespondToEnvit: respondToEnvit,
+  onContinueHand: continueHand,
 });
 
 // ---------------- GAME ACTIONS ----------------
@@ -662,7 +673,9 @@ function playCard(card) {
     if (
       !state ||
       state.status !== "playing" ||
+      state.handComplete ||
       state.pendingBid ||
+      state.pendingEnvit ||
       state.turnPlayerIndex !== myPlayerIndex
     ) {
       return;
@@ -722,6 +735,44 @@ function playCard(card) {
           }),
     );
 
+    if (trickNumber === 1 && state.envitOutcome) {
+      const envitWinner =
+        state.envitOutcome.winnerTeam ||
+        getEnvitWinner(state.envitOutcome.teamScores, state.manoIndex);
+      const envitScoreKey = envitWinner === "A" ? "scoreA" : "scoreB";
+      const envitScore =
+        (resolvedState[envitScoreKey] || 0) + state.envitOutcome.points;
+      events.push(
+        createGameEvent(`${eventPrefix}-${events.length}`, "envit-resolved", {
+          team: envitWinner,
+          points: state.envitOutcome.points,
+        }),
+      );
+      if (envitScore >= 18) {
+        events.push(
+          createGameEvent(`${eventPrefix}-${events.length}`, "game-won", {
+            team: envitWinner,
+          }),
+        );
+        return recordGameEvents(
+          {
+            ...resolvedState,
+            [envitScoreKey]: 18,
+            status: "finished",
+            matchWinner: envitWinner,
+            envitStatus: "resolved",
+            envitOutcome: null,
+          },
+          events,
+        );
+      }
+      resolvedState[envitScoreKey] = envitScore;
+      resolvedState.envitStatus = "resolved";
+      resolvedState.envitOutcome = null;
+    } else if (trickNumber === 1) {
+      resolvedState.envitStatus = "unavailable";
+    }
+
     if (winner) {
       return awardPoints(
         resolvedState,
@@ -750,12 +801,26 @@ function placeBid(level) {
   const eventId = createGameEventId();
 
   runTransaction(gameRef, (state) => {
-    if (!state || state.status !== "playing") return;
+    if (
+      !state ||
+      state.status !== "playing" ||
+      state.handComplete ||
+      state.pendingEnvit
+    ) {
+      return;
+    }
 
     const pendingBid = state.pendingBid;
     if (pendingBid) {
-      if (pendingBid.responderTeam !== teamOf(myPlayerIndex)) return;
+      const responderIndex =
+        pendingBid.responderIndex ?? nextPlayerIndex(pendingBid.actorIndex);
+      if (responderIndex !== myPlayerIndex) return;
     } else if (state.turnPlayerIndex !== myPlayerIndex) {
+      return;
+    } else if (
+      state.nextBidTeam &&
+      state.nextBidTeam !== teamOf(myPlayerIndex)
+    ) {
       return;
     }
 
@@ -765,6 +830,9 @@ function placeBid(level) {
       level,
       team: teamOf(myPlayerIndex),
       actorIndex: myPlayerIndex,
+      responderIndex: pendingBid
+        ? pendingBid.actorIndex
+        : nextPlayerIndex(myPlayerIndex),
       responderTeam: otherTeam(teamOf(myPlayerIndex)),
     };
     return recordGameEvents(
@@ -789,6 +857,66 @@ function placeBid(level) {
     });
 }
 
+function callEnvit() {
+  if (!Number.isInteger(myPlayerIndex)) return;
+  const eventId = createGameEventId();
+
+  runTransaction(gameRef, (state) => {
+    if (
+      !state ||
+      state.status !== "playing" ||
+      state.handComplete ||
+      state.pendingBid ||
+      state.pendingEnvit ||
+      (state.envitStatus && state.envitStatus !== "available") ||
+      state.turnPlayerIndex !== myPlayerIndex ||
+      (state.trickWinners || []).length !== 0 ||
+      (state.table || []).length >= 4
+    ) {
+      return;
+    }
+
+    const playedCards = state.table || [];
+    const teamScores = state.players.map((player, index) => {
+      const cards = [
+        ...(player.cards || []),
+        ...playedCards
+          .filter((entry) => entry.playerIndex === index)
+          .map((entry) => entry.card),
+      ];
+      return getEnvitValue(cards);
+    });
+    const team = teamOf(myPlayerIndex);
+    const pendingEnvit = {
+      level: "envida",
+      team,
+      callerTeam: team,
+      actorIndex: myPlayerIndex,
+      responderIndex: nextPlayerIndex(myPlayerIndex),
+      teamScores,
+    };
+    return recordGameEvents(
+      {
+        ...state,
+        envitStatus: "pending",
+        pendingEnvit,
+      },
+      [
+        createGameEvent(eventId, "envit-called", {
+          team,
+          level: "envida",
+        }),
+      ],
+    );
+  })
+    .then(({ committed }) => {
+      if (committed) gameView.closeBidDialog();
+    })
+    .catch((error) => {
+      console.error("No s'ha pogut envidar:", error);
+    });
+}
+
 function dealNextHandState(state) {
   const deck = new Deck();
   deck.fill([2, 8, 9]);
@@ -810,7 +938,12 @@ function dealNextHandState(state) {
     trickWinners: [],
     currentBid: 1,
     bidLevel: "none",
+    nextBidTeam: null,
+    envitStatus: "available",
+    pendingEnvit: null,
+    envitOutcome: null,
     pendingBid: null,
+    handComplete: false,
     status: "playing",
     matchWinner: null,
   };
@@ -850,7 +983,32 @@ function awardPoints(
     );
   }
 
-  return recordGameEvents(dealNextHandState(updatedState), events);
+  return recordGameEvents(
+    {
+      ...updatedState,
+      handComplete: true,
+      turnPlayerIndex: state.manoIndex,
+    },
+    events,
+  );
+}
+
+function continueHand() {
+  if (!Number.isInteger(myPlayerIndex)) return;
+
+  runTransaction(gameRef, (state) => {
+    if (
+      !state ||
+      state.status !== "playing" ||
+      !state.handComplete ||
+      state.manoIndex !== myPlayerIndex
+    ) {
+      return;
+    }
+    return dealNextHandState(state);
+  }).catch((error) => {
+    console.error("No s'ha pogut continuar la partida:", error);
+  });
 }
 
 function respondToBid(action) {
@@ -863,7 +1021,8 @@ function respondToBid(action) {
       !state ||
       state.status !== "playing" ||
       !pendingBid ||
-      pendingBid.responderTeam !== teamOf(myPlayerIndex)
+      (pendingBid.responderIndex ?? nextPlayerIndex(pendingBid.actorIndex)) !==
+        myPlayerIndex
     ) {
       return;
     }
@@ -875,6 +1034,7 @@ function respondToBid(action) {
         level,
         team: teamOf(myPlayerIndex),
         actorIndex: myPlayerIndex,
+        responderIndex: pendingBid.actorIndex,
         responderTeam: otherTeam(teamOf(myPlayerIndex)),
       };
       return recordGameEvents(
@@ -898,7 +1058,7 @@ function respondToBid(action) {
           ...state,
           currentBid: bidValue(pendingBid.level),
           bidLevel: pendingBid.level,
-          turnPlayerIndex: nextPlayerIndex(pendingBid.actorIndex),
+          nextBidTeam: teamOf(myPlayerIndex),
           pendingBid: null,
         },
         [
@@ -951,9 +1111,85 @@ function respondToBid(action) {
         eventPrefix,
       );
     }
-  }).catch((error) => {
-    console.error("No s'ha pogut respondre a l'aposta:", error);
-  });
+  })
+    .then(({ committed }) => {
+      if (committed) gameView.closeBidDialog();
+    })
+    .catch((error) => {
+      console.error("No s'ha pogut respondre a l'aposta:", error);
+    });
+}
+
+function respondToEnvit(action) {
+  if (!Number.isInteger(myPlayerIndex)) return;
+  const eventPrefix = createGameEventId();
+
+  runTransaction(gameRef, (state) => {
+    const pendingEnvit = state?.pendingEnvit;
+    if (
+      !state ||
+      state.status !== "playing" ||
+      !pendingEnvit ||
+      pendingEnvit.responderIndex !== myPlayerIndex
+    ) {
+      return;
+    }
+
+    if (action === "raise" && pendingEnvit.level === "envida") {
+      const counterEnvit = {
+        ...pendingEnvit,
+        level: "jo-envit",
+        team: teamOf(myPlayerIndex),
+        actorIndex: myPlayerIndex,
+        responderIndex: nextPlayerIndex(myPlayerIndex),
+      };
+      return recordGameEvents({ ...state, pendingEnvit: counterEnvit }, [
+        createGameEvent(`${eventPrefix}-0`, "envit-raised", {
+          team: counterEnvit.team,
+          points: 4,
+        }),
+      ]);
+    }
+
+    if (action !== "accept" && action !== "decline") return;
+    const accepted = action === "accept";
+    const acceptedPoints = pendingEnvit.level === "jo-envit" ? 4 : 2;
+    const envitOutcome = accepted
+      ? {
+          points: acceptedPoints,
+          teamScores: pendingEnvit.teamScores,
+          winnerTeam: null,
+        }
+      : {
+          points: pendingEnvit.level === "jo-envit" ? 2 : 1,
+          teamScores: pendingEnvit.teamScores,
+          winnerTeam:
+            pendingEnvit.level === "jo-envit"
+              ? pendingEnvit.team
+              : pendingEnvit.callerTeam,
+        };
+    return recordGameEvents(
+      {
+        ...state,
+        envitStatus: "called",
+        pendingEnvit: null,
+        envitOutcome,
+      },
+      [
+        createGameEvent(`${eventPrefix}-0`, "envit-answered", {
+          team: teamOf(myPlayerIndex),
+          answer: action,
+          level: pendingEnvit.level,
+        }),
+      ],
+    );
+  })
+    .then(({ committed }) => {
+      if (committed) gameView.closeBidDialog();
+    })
+    .catch((error) => {
+      console.error("No s'ha pogut respondre a l'envit:", error);
+    });
 }
 
 // ---------------- GAME LISTENER ----------------

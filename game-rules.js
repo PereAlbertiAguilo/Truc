@@ -84,6 +84,60 @@ export function nextPlayerIndex(index) {
   return (index + 1) % 4;
 }
 
+export function getEnvitValue(cards) {
+  const cardValue = (card) => (card.num >= 1 && card.num <= 7 ? card.num : 0);
+  const specialValue = (card) => {
+    if (card.palo === "basto" && card.num === 11) return 28;
+    if (card.palo === "oro" && card.num === 10) return 27;
+    return 0;
+  };
+
+  let bestValue = 0;
+  for (let firstIndex = 0; firstIndex < cards.length; firstIndex++) {
+    for (
+      let secondIndex = firstIndex + 1;
+      secondIndex < cards.length;
+      secondIndex++
+    ) {
+      const firstCard = cards[firstIndex];
+      const secondCard = cards[secondIndex];
+      const firstSpecial = specialValue(firstCard);
+      const secondSpecial = specialValue(secondCard);
+
+      if (firstSpecial) {
+        bestValue = Math.max(bestValue, firstSpecial + cardValue(secondCard));
+      }
+      if (secondSpecial) {
+        bestValue = Math.max(bestValue, secondSpecial + cardValue(firstCard));
+      }
+      if (
+        firstCard.palo === secondCard.palo &&
+        !firstSpecial &&
+        !secondSpecial
+      ) {
+        bestValue = Math.max(
+          bestValue,
+          20 + cardValue(firstCard) + cardValue(secondCard),
+        );
+      }
+    }
+  }
+
+  return Math.min(bestValue, 35);
+}
+
+export function getEnvitWinner(teamScores, manoIndex) {
+  const playerOrder = Array.from({ length: 4 }, (_, index) => index).sort(
+    (first, second) =>
+      ((first - manoIndex + 4) % 4) - ((second - manoIndex + 4) % 4),
+  );
+  const bestA = Math.max(teamScores[0], teamScores[2]);
+  const bestB = Math.max(teamScores[1], teamScores[3]);
+  if (bestA > bestB) return "A";
+  if (bestB > bestA) return "B";
+  return teamOf(playerOrder.find((index) => teamScores[index] === bestA));
+}
+
 export const bidLevels = ["none", "truc", "retruc", "valnou", "jocfora"];
 
 export function bidValue(level) {
