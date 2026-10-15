@@ -31,6 +31,10 @@ export function createGameView({
     scoreB: document.getElementById("scoreB"),
     handBidA: document.getElementById("handBidA"),
     handBidB: document.getElementById("handBidB"),
+    envitStatusA: document.getElementById("envitStatusA"),
+    envitStatusB: document.getElementById("envitStatusB"),
+    baseTrackA: document.getElementById("baseTrackA"),
+    baseTrackB: document.getElementById("baseTrackB"),
     raiseStatusA: document.getElementById("raiseStatusA"),
     raiseStatusB: document.getElementById("raiseStatusB"),
     messages: document.getElementById("messages"),
@@ -133,6 +137,11 @@ export function createGameView({
     elements.scoreB.textContent = "0";
     elements.handBidA.textContent = "1 punt · Sense aposta";
     elements.handBidB.textContent = "1 punt · Sense aposta";
+    for (const status of [elements.envitStatusA, elements.envitStatusB]) {
+      status.textContent = "Disponible";
+      status.dataset.state = "available";
+    }
+    renderBasePoints({ trickWinners: [] });
     elements.raiseStatusA.textContent = "—";
     elements.raiseStatusB.textContent = "—";
     game.scoreA = 0;
@@ -190,7 +199,7 @@ export function createGameView({
       notice.className = "game-event";
       notice.textContent = message;
       elements.gameEvents.appendChild(notice);
-      setTimeout(() => notice.remove(), 6_000);
+      setTimeout(() => notice.remove(), 9_000);
     }
   }
 
@@ -240,14 +249,18 @@ export function createGameView({
 
     const pendingBid = state.pendingBid || null;
     const currentLevel = pendingBid?.level || game.bidLevel || "none";
-    const handPoints = pendingBid
-      ? bidValue(pendingBid.level)
-      : game.currentBid || 1;
+    const handPoints = game.currentBid || 1;
     const levelLabel =
       currentLevel === "none" ? "Sense aposta" : bidLabel(currentLevel);
-    const handSummary = `${handPoints} ${handPoints === 1 ? "punt" : "punts"} · ${levelLabel}`;
+    const pendingPoints = pendingBid ? bidValue(pendingBid.level) : null;
+    const handSummary = pendingBid
+      ? `${handPoints} ${handPoints === 1 ? "punt" : "punts"} · ${levelLabel} pendent ` +
+        `(${pendingPoints} ${pendingPoints === 1 ? "punt" : "punts"})`
+      : `${handPoints} ${handPoints === 1 ? "punt" : "punts"} · ${levelLabel}`;
     elements.handBidA.textContent = handSummary;
     elements.handBidB.textContent = handSummary;
+    renderEnvitStatus(state);
+    renderBasePoints(state);
 
     let raisePlayerIndex = null;
     if (state.status === "playing" && pendingBid) {
@@ -276,6 +289,84 @@ export function createGameView({
           game.players[raisePlayerIndex]?.name || `Equip ${team}`;
       } else {
         statusElement.textContent = "No li toca";
+      }
+    }
+  }
+
+  function renderEnvitStatus(state) {
+    const pendingEnvit = state.pendingEnvit || null;
+    const pendingOutcome = state.envitOutcome || null;
+    const result = state.envitResult || null;
+
+    for (const team of ["A", "B"]) {
+      const statusElement =
+        team === "A" ? elements.envitStatusA : elements.envitStatusB;
+      let label = "Disponible";
+      let status = "available";
+
+      if (pendingEnvit) {
+        status = "pending";
+        label =
+          pendingEnvit.team === team
+            ? "Envida feta · pendent"
+            : "Cal respondre";
+      } else if (pendingOutcome) {
+        status = "accepted";
+        label =
+          pendingOutcome.winnerTeam === team
+            ? `Acceptada · +${pendingOutcome.points} pendent`
+            : "Acceptada · pendent";
+      } else if (result) {
+        status = "resolved";
+        label =
+          result.winnerTeam === team
+            ? `Guanyada · +${result.points}`
+            : `Perduda · equip ${result.winnerTeam} +${result.points}`;
+      } else if (
+        state.envitStatus === "unavailable" ||
+        state.envitStatus === "resolved"
+      ) {
+        status = "unavailable";
+        label =
+          state.envitStatus === "resolved" ? "Envida resolta" : "No cantada";
+      }
+
+      statusElement.textContent = label;
+      statusElement.dataset.state = status;
+    }
+  }
+
+  function renderBasePoints(state) {
+    const trickWinners = Array.isArray(state.trickWinners)
+      ? state.trickWinners.slice(0, 3)
+      : [];
+
+    for (const team of ["A", "B"]) {
+      const trackElement =
+        team === "A" ? elements.baseTrackA : elements.baseTrackB;
+      const teamWins = trickWinners.filter((winner) => winner === team).length;
+      trackElement.setAttribute(
+        "aria-label",
+        `Equip ${team}: ${teamWins} ${teamWins === 1 ? "base guanyada" : "bases guanyades"}. ` +
+          trickWinners
+            .map((winner, index) =>
+              winner === "tie"
+                ? `Base ${index + 1} empatada`
+                : `Base ${index + 1}: equip ${winner}`,
+            )
+            .join("; "),
+      );
+
+      for (const [index, point] of [...trackElement.children].entries()) {
+        const winner = trickWinners[index];
+        point.dataset.result =
+          winner === undefined
+            ? "pending"
+            : winner === "tie"
+              ? "tie"
+              : winner === team
+                ? "won"
+                : "lost";
       }
     }
   }
@@ -358,15 +449,19 @@ export function createGameView({
 
   function renderPlayerHighlights() {
     for (const player of Object.values(elements.players)) {
-      player.classList.remove("activePlayer", "hostPlayer");
+      player.classList.remove("activePlayer", "hostPlayer", "teamA", "teamB");
     }
 
     const viewerIndex = viewerPlayerIndex();
     const position =
       playerPositions[(game.turnPlayerIndex - viewerIndex + 4) % 4];
-    elements.players[position].classList.add("activePlayer");
+    const activePlayer = elements.players[position];
+    activePlayer.classList.add(
+      "activePlayer",
+      `team${teamOf(game.turnPlayerIndex)}`,
+    );
     if (game.turnPlayerIndex === getHostPlayerIndex()) {
-      elements.players[position].classList.add("hostPlayer");
+      activePlayer.classList.add("hostPlayer");
     }
   }
 

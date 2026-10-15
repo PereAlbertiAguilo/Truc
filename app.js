@@ -622,6 +622,7 @@ class Game {
       envitStatus: "available",
       pendingEnvit: null,
       envitOutcome: null,
+      envitResult: null,
       pendingBid: null,
       handComplete: false,
       scoreA: this.scoreA,
@@ -735,41 +736,10 @@ function playCard(card) {
           }),
     );
 
-    if (trickNumber === 1 && state.envitOutcome) {
-      const envitWinner =
-        state.envitOutcome.winnerTeam ||
-        getEnvitWinner(state.envitOutcome.teamScores, state.manoIndex);
-      const envitScoreKey = envitWinner === "A" ? "scoreA" : "scoreB";
-      const envitScore =
-        (resolvedState[envitScoreKey] || 0) + state.envitOutcome.points;
-      events.push(
-        createGameEvent(`${eventPrefix}-${events.length}`, "envit-resolved", {
-          team: envitWinner,
-          points: state.envitOutcome.points,
-        }),
-      );
-      if (envitScore >= 18) {
-        events.push(
-          createGameEvent(`${eventPrefix}-${events.length}`, "game-won", {
-            team: envitWinner,
-          }),
-        );
-        return recordGameEvents(
-          {
-            ...resolvedState,
-            [envitScoreKey]: 18,
-            status: "finished",
-            matchWinner: envitWinner,
-            envitStatus: "resolved",
-            envitOutcome: null,
-          },
-          events,
-        );
-      }
-      resolvedState[envitScoreKey] = envitScore;
-      resolvedState.envitStatus = "resolved";
-      resolvedState.envitOutcome = null;
-    } else if (trickNumber === 1) {
+    if (
+      trickNumber === 1 &&
+      (!state.envitStatus || state.envitStatus === "available")
+    ) {
       resolvedState.envitStatus = "unavailable";
     }
 
@@ -942,6 +912,7 @@ function dealNextHandState(state) {
     envitStatus: "available",
     pendingEnvit: null,
     envitOutcome: null,
+    envitResult: null,
     pendingBid: null,
     handComplete: false,
     status: "playing",
@@ -957,9 +928,11 @@ function awardPoints(
   precedingEvents = [],
   eventPrefix = createGameEventId(),
 ) {
-  const scoreKey = team === "A" ? "scoreA" : "scoreB";
-  const score = (state[scoreKey] || 0) + points;
-  const updatedState = { ...state, [scoreKey]: score, pendingBid: null };
+  const scores = {
+    A: state.scoreA || 0,
+    B: state.scoreB || 0,
+  };
+  scores[team] += points;
   const events = [
     ...precedingEvents,
     createGameEvent(`${eventPrefix}-${precedingEvents.length}`, "hand-won", {
@@ -968,16 +941,50 @@ function awardPoints(
     }),
   ];
 
-  if (forceMatchWinner || score >= 18) {
+  let envitWinner = null;
+  if (state.envitOutcome) {
+    envitWinner =
+      state.envitOutcome.winnerTeam ||
+      getEnvitWinner(state.envitOutcome.teamScores, state.manoIndex);
+    scores[envitWinner] += state.envitOutcome.points;
     events.push(
-      createGameEvent(`${eventPrefix}-${events.length}`, "game-won", { team }),
+      createGameEvent(`${eventPrefix}-${events.length}`, "envit-resolved", {
+        team: envitWinner,
+        points: state.envitOutcome.points,
+      }),
+    );
+  }
+
+  const matchWinner = forceMatchWinner
+    ? team
+    : scores[team] >= 18
+      ? team
+      : envitWinner && scores[envitWinner] >= 18
+        ? envitWinner
+        : null;
+  const updatedState = {
+    ...state,
+    scoreA: matchWinner === "A" ? 18 : scores.A,
+    scoreB: matchWinner === "B" ? 18 : scores.B,
+    pendingBid: null,
+    envitStatus: state.envitOutcome ? "resolved" : state.envitStatus,
+    envitOutcome: null,
+    envitResult: envitWinner
+      ? { winnerTeam: envitWinner, points: state.envitOutcome.points }
+      : state.envitResult || null,
+  };
+
+  if (matchWinner) {
+    events.push(
+      createGameEvent(`${eventPrefix}-${events.length}`, "game-won", {
+        team: matchWinner,
+      }),
     );
     return recordGameEvents(
       {
         ...updatedState,
-        [scoreKey]: 18,
         status: "finished",
-        matchWinner: team,
+        matchWinner,
       },
       events,
     );
@@ -991,6 +998,49 @@ function awardPoints(
     },
     events,
   );
+}
+
+function awardEnvitPoints(state, outcome, precedingEvents, eventPrefix) {
+  const scoreKey = outcome.winnerTeam === "A" ? "scoreA" : "scoreB";
+  const score = (state[scoreKey] || 0) + outcome.points;
+  const events = [
+    ...precedingEvents,
+    createGameEvent(
+      `${eventPrefix}-${precedingEvents.length}`,
+      "envit-resolved",
+      {
+        team: outcome.winnerTeam,
+        points: outcome.points,
+      },
+    ),
+  ];
+  const updatedState = {
+    ...state,
+    [scoreKey]: score,
+    envitStatus: "resolved",
+    pendingEnvit: null,
+    envitOutcome: null,
+    envitResult: outcome,
+  };
+
+  if (score >= 18) {
+    events.push(
+      createGameEvent(`${eventPrefix}-${events.length}`, "game-won", {
+        team: outcome.winnerTeam,
+      }),
+    );
+    return recordGameEvents(
+      {
+        ...updatedState,
+        [scoreKey]: 18,
+        status: "finished",
+        matchWinner: outcome.winnerTeam,
+      },
+      events,
+    );
+  }
+
+  return recordGameEvents(updatedState, events);
 }
 
 function continueHand() {
@@ -1140,8 +1190,7 @@ function respondToEnvit(action) {
         ...pendingEnvit,
         level: "jo-envit",
         team: teamOf(myPlayerIndex),
-        actorIndex: myPlayerIndex,
-        responderIndex: nextPlayerIndex(myPlayerIndex),
+        responderIndex: pendingEnvit.actorIndex,
       };
       return recordGameEvents({ ...state, pendingEnvit: counterEnvit }, [
         createGameEvent(`${eventPrefix}-0`, "envit-raised", {
@@ -1157,17 +1206,33 @@ function respondToEnvit(action) {
     const envitOutcome = accepted
       ? {
           points: acceptedPoints,
-          teamScores: pendingEnvit.teamScores,
-          winnerTeam: null,
+          winnerTeam: getEnvitWinner(pendingEnvit.teamScores, state.manoIndex),
         }
       : {
           points: pendingEnvit.level === "jo-envit" ? 2 : 1,
-          teamScores: pendingEnvit.teamScores,
           winnerTeam:
             pendingEnvit.level === "jo-envit"
               ? pendingEnvit.team
               : pendingEnvit.callerTeam,
         };
+    const answeredEvent = createGameEvent(
+      `${eventPrefix}-0`,
+      "envit-answered",
+      {
+        team: teamOf(myPlayerIndex),
+        answer: action,
+        level: pendingEnvit.level,
+      },
+    );
+    if (!accepted) {
+      return awardEnvitPoints(
+        state,
+        envitOutcome,
+        [answeredEvent],
+        eventPrefix,
+      );
+    }
+
     return recordGameEvents(
       {
         ...state,
@@ -1175,13 +1240,7 @@ function respondToEnvit(action) {
         pendingEnvit: null,
         envitOutcome,
       },
-      [
-        createGameEvent(`${eventPrefix}-0`, "envit-answered", {
-          team: teamOf(myPlayerIndex),
-          answer: action,
-          level: pendingEnvit.level,
-        }),
-      ],
+      [answeredEvent],
     );
   })
     .then(({ committed }) => {

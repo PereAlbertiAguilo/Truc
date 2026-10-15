@@ -12,11 +12,24 @@
         <div class="teamScoreHeading">
           <h2>Equip A</h2>
           <span class="matchScore"
-            ><span id="scoreA">0</span><small>/ 18</small></span
+            ><span id="scoreA">0</span><small>/ 18</small
+            ><span
+              class="baseTrack"
+              id="baseTrackA"
+              role="img"
+              aria-label="Equip A: cap base guanyada"
+              ><span class="basePoint" data-result="pending"></span
+              ><span class="basePoint" data-result="pending"></span
+              ><span class="basePoint" data-result="pending"></span
+            ></span
           >
         </div>
         <p class="handBid">
-          En joc: <span id="handBidA">1 punt · Sense aposta</span>
+          Punts de la mà: <span id="handBidA">1 punt · Sense aposta</span>
+        </p>
+        <p class="envitStatus">
+          Envida:
+          <span id="envitStatusA" data-state="available">Disponible</span>
         </p>
         <p class="raiseStatus">Pot pujar: <span id="raiseStatusA">—</span></p>
       </section>
@@ -24,25 +37,38 @@
         <div class="teamScoreHeading">
           <h2>Equip B</h2>
           <span class="matchScore"
-            ><span id="scoreB">0</span><small>/ 18</small></span
+            ><span id="scoreB">0</span><small>/ 18</small
+            ><span
+              class="baseTrack"
+              id="baseTrackB"
+              role="img"
+              aria-label="Equip B: cap base guanyada"
+              ><span class="basePoint" data-result="pending"></span
+              ><span class="basePoint" data-result="pending"></span
+              ><span class="basePoint" data-result="pending"></span
+            ></span
           >
         </div>
         <p class="handBid">
-          En joc: <span id="handBidB">1 punt · Sense aposta</span>
+          Punts de la mà: <span id="handBidB">1 punt · Sense aposta</span>
+        </p>
+        <p class="envitStatus">
+          Envida:
+          <span id="envitStatusB" data-state="available">Disponible</span>
         </p>
         <p class="raiseStatus">Pot pujar: <span id="raiseStatusB">—</span></p>
       </section>
       <div id="spectatorStatus" aria-live="polite">Espectadors: 0/4</div>
+      <div
+        id="gameEvents"
+        role="log"
+        aria-live="polite"
+        aria-relevant="additions"
+        aria-label="Esdeveniments de la partida"
+      ></div>
     </div>
 
     <div id="messages"></div>
-    <div
-      id="gameEvents"
-      role="log"
-      aria-live="polite"
-      aria-relevant="additions"
-      aria-label="Esdeveniments de la partida"
-    ></div>
 
     <div id="table">
       <div id="tableCards"></div>

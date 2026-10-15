@@ -41,6 +41,7 @@ body {
 }
 
 #scoreboard {
+  position: relative;
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   align-items: center;
@@ -59,13 +60,20 @@ body {
 }
 
 .teamScore {
+  --team-color: #63c878;
+  --team-rgb: 99, 200, 120;
   min-width: 0;
   display: grid;
   gap: 4px;
   padding: 8px 12px;
-  border: 1px solid rgba(226, 230, 212, 0.12);
+  border: 1px solid rgba(var(--team-rgb), 0.4);
   border-radius: 10px;
-  background: rgba(255, 255, 255, 0.035);
+  background: rgba(var(--team-rgb), 0.09);
+}
+
+.teamScore:nth-of-type(2) {
+  --team-color: #e76e68;
+  --team-rgb: 231, 110, 104;
 }
 
 .teamScoreHeading {
@@ -77,13 +85,17 @@ body {
 
 .teamScoreHeading h2 {
   margin: 0;
+  color: var(--team-color);
   font-size: 0.95em;
   font-weight: 700;
   letter-spacing: 0.04em;
 }
 
 .matchScore {
-  color: #f4d893;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--team-color);
   font-size: 1.1em;
   font-weight: 750;
   font-variant-numeric: tabular-nums;
@@ -108,8 +120,51 @@ body {
 
 .teamScore p span {
   min-width: 2ch;
-  color: #f4f1e8;
+  color: var(--team-color);
   font-weight: 600;
+}
+
+.teamScore .envitStatus span[data-state="pending"] {
+  font-weight: 750;
+}
+
+.teamScore .baseTrack {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  margin-left: 2px;
+}
+
+.teamScore:first-of-type .baseTrack {
+  order: -1;
+}
+
+.teamScore .basePoint {
+  width: 10px;
+  height: 10px;
+  min-width: 10px;
+  padding: 0;
+  border: 1px solid rgba(226, 230, 212, 0.28);
+  border-radius: 50%;
+  background: rgba(226, 230, 212, 0.08);
+  box-shadow: inset 0 0 2px rgba(0, 0, 0, 0.65);
+}
+
+.teamScore p span.basePoint {
+  min-width: 10px;
+}
+
+.teamScore .basePoint[data-result="won"] {
+  border-color: var(--team-color);
+  background: var(--team-color);
+  box-shadow: 0 0 7px rgba(var(--team-rgb), 0.65);
+}
+
+.teamScore .basePoint[data-result="tie"] {
+  border-color: #f4d893;
+  background: #e7bc56;
+  box-shadow: 0 0 7px rgba(231, 188, 86, 0.55);
 }
 
 .teamScore:nth-of-type(2) .teamScoreHeading {
@@ -212,13 +267,17 @@ body {
 }
 
 .activePlayer {
-  outline: 2px solid #f1d26d;
+  outline: 2px solid currentColor;
   outline-offset: -3px;
   border-radius: 14px;
 }
 
-.activePlayer.hostPlayer {
-  outline-color: #ec776d;
+.activePlayer.teamA {
+  color: #63c878;
+}
+
+.activePlayer.teamB {
+  color: #e76e68;
 }
 
 #mainCards,
@@ -298,10 +357,10 @@ body {
 }
 
 #gameEvents {
-  position: fixed;
+  position: absolute;
   z-index: 7;
-  top: max(84px, calc(env(safe-area-inset-top) + 76px));
-  right: max(14px, env(safe-area-inset-right));
+  top: calc(100% + 8px);
+  right: 0;
   width: min(360px, calc(100vw - 28px));
   max-height: 40dvh;
   display: flex;
@@ -424,8 +483,7 @@ button:focus-visible {
 }
 
 #bidDialog::backdrop {
-  background: rgba(5, 9, 6, 0.72);
-  backdrop-filter: blur(3px);
+  background: rgba(5, 9, 6, 0.18);
 }
 
 #bidDialog h2 {
@@ -486,12 +544,6 @@ button:focus-visible {
 
   #messages {
     top: 58px;
-  }
-
-  #gameEvents {
-    top: max(76px, calc(env(safe-area-inset-top) + 68px));
-    right: max(10px, env(safe-area-inset-right));
-    width: min(320px, calc(100vw - 20px));
   }
 }
 
