@@ -12,11 +12,12 @@ import {
   raiseLevel,
   teamOf,
 } from "./game-rules.js";
-import { createGameView } from "./game-view.js";
+import { createGameView } from "./game-view.js?v=20261015-20";
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.0.0/firebase-app.js";
 import {
   getDatabase,
   ref,
+  get,
   onValue,
   onDisconnect,
   runTransaction,
@@ -28,7 +29,11 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.0.0/firebase-auth.js";
 
 const DEBUG_RESET = false;
-const roomName = "room1";
+let roomName = null;
+let roomDisplayName = "";
+let gameRef = null;
+let playersRef = null;
+let roomRef = null;
 let myPlayerIndex = null;
 let myName = null;
 let mySpectator = false;
@@ -53,14 +58,13 @@ try {
   await signInAnonymously(auth);
 } catch (error) {
   console.error("Ha fallat l'inici de sessió anònim a Firebase:", error);
-  document.getElementById("messages").textContent =
+  document.getElementById("homeMessage").textContent =
     "No ens hem pogut connectar a Firebase. Comproveu que l'accés anònim estigui activat.";
   throw error;
 }
 
 const db = getDatabase(app);
-const gameRef = ref(db, roomName + "/game");
-const playersRef = ref(db, roomName + "/lobbyPlayers");
+const directoryRef = ref(db, "roomDirectory");
 const connectedRef = ref(db, ".info/connected");
 const MAX_ROOM_SIZE = 8;
 const MAX_SPECTATORS = MAX_ROOM_SIZE - 4;
@@ -108,8 +112,13 @@ let gameStateLoaded = false;
 let presenceWrite = null;
 let connectionGeneration = 0;
 let lastGameState = null;
+let roomWasAvailable = false;
+let roomUnsubscribers = [];
+let joiningRoom = false;
+let requestedRoomId = new URL(window.location.href).searchParams.get("room");
 const seatTimers = new Map();
 const spectatorTimers = new Map();
+const emptyRoomWatchers = new Map();
 let hostElectionTimer = null;
 
 function currentHostId(players) {
@@ -125,26 +134,58 @@ function updateResetControl(players) {
 }
 
 function publishPresence() {
-  if (!connected || presenceWrite?.generation === connectionGeneration) {
+  if (
+    !connected ||
+    !roomName ||
+    presenceWrite?.generation === connectionGeneration
+  ) {
     return;
   }
 
+  const activeRoomId = roomName;
   const playerPresenceRef = ref(
     db,
-    `${roomName}/lobbyPlayers/presence/${playerId}`,
+    `rooms/${activeRoomId}/lobbyPlayers/presence/${playerId}`,
   );
   const generation = connectionGeneration;
   const write = onDisconnect(playerPresenceRef)
     .remove()
     .then(() => {
-      if (!connected || generation !== connectionGeneration) return;
-      return set(playerPresenceRef, true);
+      if (
+        !connected ||
+        generation !== connectionGeneration ||
+        roomName !== activeRoomId
+      ) {
+        return;
+      }
+      return runTransaction(
+        ref(db, `rooms/${activeRoomId}/lobbyPlayers`),
+        (players) => {
+          if (players?.closed) return;
+          return {
+            ...(players || {}),
+            presence: {
+              ...(players?.presence || {}),
+              [playerId]: true,
+            },
+          };
+        },
+      );
+    })
+    .then((result) => {
+      if (result && !result.committed) {
+        throw new Error("La sala s'està tancant.");
+      }
     })
     .then(() => {
       roomFull = false;
     })
     .catch((error) => {
       console.error("No s'ha pogut registrar la presència:", error);
+      if (roomName === activeRoomId) {
+        document.getElementById("messages").textContent =
+          "No s'ha pogut registrar la connexió a la sala.";
+      }
     })
     .finally(() => {
       if (presenceWrite?.promise === write) presenceWrite = null;
@@ -159,6 +200,404 @@ onValue(connectedRef, (snapshot) => {
     publishPresence();
   } else {
     presenceWrite = null;
+  }
+});
+
+function showHomeMessage(message = "") {
+  document.getElementById("homeMessage").textContent = message;
+}
+
+function renderRoomDirectory(rooms) {
+  const roomList = document.getElementById("roomList");
+  roomList.replaceChildren();
+  const entries = Object.entries(rooms || {})
+    .filter(
+      ([, room]) =>
+        room && room.closed !== true && typeof room.name === "string",
+    )
+    .sort(
+      ([, first], [, second]) =>
+        (second.createdAt || 0) - (first.createdAt || 0),
+    );
+
+  if (entries.length === 0) {
+    const emptyMessage = document.createElement("li");
+    emptyMessage.className = "emptyRoomList";
+    emptyMessage.textContent = "Encara no hi ha cap sala. Crea'n una!";
+    roomList.append(emptyMessage);
+    return;
+  }
+
+  for (const [id, room] of entries) {
+    const item = document.createElement("li");
+    item.className = "roomListItem";
+
+    const details = document.createElement("div");
+    details.className = "roomListDetails";
+    const name = document.createElement("strong");
+    name.textContent = room.name;
+    const status = document.createElement("span");
+    const playerCount = Number.isInteger(room.playerCount)
+      ? room.playerCount
+      : 0;
+    status.textContent = `${playerCount} connectat${playerCount === 1 ? "" : "s"}`;
+    details.append(name, status);
+
+    const joinButton = document.createElement("button");
+    joinButton.type = "button";
+    joinButton.textContent = "Entra";
+    joinButton.addEventListener("click", () => {
+      enterRoom(id, room).catch((error) => {
+        console.error("No s'ha pogut entrar a la sala:", error);
+        showHomeMessage("No s'ha pogut entrar a la sala. Torna-ho a provar.");
+      });
+    });
+
+    item.append(details, joinButton);
+    roomList.append(item);
+  }
+}
+
+onValue(
+  directoryRef,
+  (snapshot) => {
+    const rooms = snapshot.val() || {};
+    renderRoomDirectory(rooms);
+    watchEmptyRooms(rooms);
+
+    if (!requestedRoomId || joiningRoom || roomName) return;
+    const requestedRoom = rooms[requestedRoomId];
+    if (!requestedRoom) {
+      showHomeMessage("Aquesta sala ja no existeix.");
+      requestedRoomId = null;
+      return;
+    }
+    enterRoom(requestedRoomId, requestedRoom).catch((error) => {
+      console.error("No s'ha pogut obrir la sala:", error);
+      showHomeMessage("No s'ha pogut obrir la sala. Torna-ho a provar.");
+    });
+  },
+  (error) => {
+    console.error("No s'ha pogut carregar el directori de sales:", error);
+    showHomeMessage("No s'han pogut carregar les sales.");
+  },
+);
+
+function watchEmptyRooms(rooms) {
+  for (const [roomId, watcher] of emptyRoomWatchers) {
+    if (rooms[roomId] && rooms[roomId].closed !== true) continue;
+    if (watcher.timer) clearTimeout(watcher.timer);
+    watcher.unsubscribe();
+    emptyRoomWatchers.delete(roomId);
+  }
+
+  for (const [roomId, room] of Object.entries(rooms)) {
+    if (!room || room.closed === true || emptyRoomWatchers.has(roomId)) {
+      continue;
+    }
+
+    const watcher = { unsubscribe: null, timer: null };
+    watcher.unsubscribe = onValue(
+      ref(db, `rooms/${roomId}/lobbyPlayers`),
+      (snapshot) => {
+        const players = snapshot.val();
+        const presence = players?.presence || {};
+        if (Object.keys(presence).length > 0) {
+          if (watcher.timer) clearTimeout(watcher.timer);
+          watcher.timer = null;
+          return;
+        }
+
+        if (watcher.timer) return;
+        watcher.timer = setTimeout(() => {
+          watcher.timer = null;
+          closeEmptyRoom(roomId).catch((error) => {
+            console.error("No s'ha pogut tancar la sala buida:", error);
+          });
+        }, DISCONNECT_GRACE_MS);
+      },
+      (error) => {
+        console.error(`No s'ha pogut comprovar la sala ${roomId}:`, error);
+      },
+    );
+    emptyRoomWatchers.set(roomId, watcher);
+  }
+}
+
+async function closeEmptyRoom(roomId) {
+  const directorySnapshot = await get(ref(db, `roomDirectory/${roomId}`));
+  if (!directorySnapshot.exists()) return;
+
+  const roomPlayersRef = ref(db, `rooms/${roomId}/lobbyPlayers`);
+  const result = await runTransaction(roomPlayersRef, (players) => {
+    if (players?.closed || Object.keys(players?.presence || {}).length > 0) {
+      return;
+    }
+    return { ...(players || {}), closed: true };
+  });
+  if (!result.committed) return;
+
+  await Promise.all([
+    set(ref(db, `rooms/${roomId}`), null),
+    set(ref(db, `roomDirectory/${roomId}`), null),
+  ]);
+}
+
+document
+  .getElementById("createRoomForm")
+  .addEventListener("submit", async (event) => {
+    event.preventDefault();
+    if (joiningRoom) return;
+
+    const input = document.getElementById("roomNameInput");
+    const name = input.value.trim();
+    if (!name) {
+      showHomeMessage("Escriu un nom per a la sala.");
+      input.focus();
+      return;
+    }
+
+    joiningRoom = true;
+    showHomeMessage("Creant la sala…");
+    const roomId = createPlayerId();
+    let createdRoomRef = null;
+    try {
+      const room = { name, createdAt: Date.now(), playerCount: 0 };
+      createdRoomRef = ref(db, `roomDirectory/${roomId}`);
+      await set(createdRoomRef, room);
+      joiningRoom = false;
+      await enterRoom(roomId, room);
+      input.value = "";
+    } catch (error) {
+      console.error("No s'ha pogut crear la sala:", error);
+      if (createdRoomRef && !roomName) {
+        await set(createdRoomRef, null).catch((cleanupError) => {
+          console.error("No s'ha pogut netejar la sala buida:", cleanupError);
+        });
+      }
+      showHomeMessage("No s'ha pogut crear la sala. Torna-ho a provar.");
+    } finally {
+      joiningRoom = false;
+    }
+  });
+
+async function enterRoom(roomId, room) {
+  if (roomName || joiningRoom) return;
+  if (!/^[A-Za-z0-9_-]{1,64}$/.test(roomId)) {
+    throw new Error("Identificador de sala no vàlid.");
+  }
+
+  joiningRoom = true;
+  try {
+    const directorySnapshot = await get(ref(db, `roomDirectory/${roomId}`));
+    const roomInfo = directorySnapshot.val();
+    if (!roomInfo || roomInfo.closed) {
+      throw new Error("La sala ja no existeix.");
+    }
+
+    roomName = roomId;
+    roomDisplayName = roomInfo.name || room.name || "Sala";
+    gameRef = ref(db, `rooms/${roomId}/game`);
+    playersRef = ref(db, `rooms/${roomId}/lobbyPlayers`);
+    roomRef = ref(db, `rooms/${roomId}`);
+    myPlayerIndex = null;
+    myName = null;
+    mySpectator = false;
+    roomFull = false;
+    roomPlayers = {};
+    gameStateLoaded = false;
+    lastGameState = null;
+    roomWasAvailable = false;
+    connectionGeneration++;
+    presenceWrite = null;
+
+    document.getElementById("currentRoomName").textContent = roomDisplayName;
+    document.getElementById("currentRoomCode").textContent = `Codi: ${roomId}`;
+    document.getElementById("homeScreen").hidden = true;
+    document.getElementById("gameScreen").hidden = false;
+    const roomUrl = new URL(window.location.href);
+    roomUrl.searchParams.set("room", roomId);
+    window.history.replaceState(null, "", roomUrl);
+    requestedRoomId = null;
+
+    subscribeToRoom();
+    publishPresence();
+    showHomeMessage("");
+  } finally {
+    joiningRoom = false;
+  }
+}
+
+function subscribeToRoom() {
+  roomUnsubscribers = [
+    onValue(
+      playersRef,
+      (snapshot) => {
+        const players = snapshot.val() || {};
+        roomPlayers = players;
+        if (connected && !players.presence?.[playerId]) {
+          publishPresence();
+          return;
+        }
+
+        const ownSeat = [0, 1, 2, 3].find(
+          (index) => players[index]?.id === playerId,
+        );
+        if (ownSeat !== undefined) {
+          myPlayerIndex = ownSeat;
+          myName = players[ownSeat].name;
+          mySpectator = false;
+          roomFull = false;
+        } else if (players.spectators?.[playerId]) {
+          myPlayerIndex = null;
+          myName = players.spectators[playerId].name;
+          mySpectator = true;
+          roomFull = false;
+        } else {
+          myPlayerIndex = null;
+          myName = null;
+          mySpectator = false;
+        }
+
+        updateDirectoryPlayerCount(players);
+        claimMembership();
+        updateLobbyMessage(players);
+        updateResetControl(players);
+        scheduleHostElection(players);
+        scheduleSeatReclamation(players);
+        startGameIfReady(players);
+        refreshCurrentGameView();
+      },
+      (error) => {
+        console.error("No s'ha pogut llegir la sala:", error);
+        document.getElementById("messages").textContent =
+          "No s'ha pogut carregar l'estat de la sala.";
+      },
+    ),
+    onValue(
+      gameRef,
+      (snapshot) => {
+        lastGameState = snapshot.val();
+        gameStateLoaded = true;
+        startingGame = false;
+        gameView.render(lastGameState);
+        gameView.showGameEvents(lastGameState?.eventLog || []);
+        claimMembership();
+        if (!lastGameState) startGameIfReady(roomPlayers);
+      },
+      (error) => {
+        console.error("No s'ha pogut llegir la partida:", error);
+        document.getElementById("messages").textContent =
+          "No s'ha pogut carregar la partida.";
+      },
+    ),
+    onValue(roomRef, (snapshot) => {
+      if (snapshot.exists()) {
+        roomWasAvailable = true;
+      } else if (roomWasAvailable && roomName) {
+        leaveRoom("La sala s'ha tancat perquè ja no hi quedava ningú.").catch(
+          (error) => {
+            console.error("No s'ha pogut sortir de la sala tancada:", error);
+          },
+        );
+      }
+    }),
+  ];
+}
+
+function updateDirectoryPlayerCount(players) {
+  if (!roomName) return;
+  const activeCount = Object.keys(players.presence || {}).length;
+  runTransaction(ref(db, `roomDirectory/${roomName}`), (currentRoom) => {
+    if (!currentRoom || currentRoom.playerCount === activeCount) return;
+    return { ...currentRoom, playerCount: activeCount };
+  }).catch((error) => {
+    console.error("No s'ha pogut actualitzar el recompte de la sala:", error);
+  });
+}
+
+async function leaveRoom(message = "") {
+  const activeRoomId = roomName;
+  if (!activeRoomId || !playersRef) return;
+
+  const currentPlayersRef = playersRef;
+  roomUnsubscribers.forEach((unsubscribe) => unsubscribe());
+  roomUnsubscribers = [];
+  connectionGeneration++;
+  presenceWrite = null;
+  if (!message) {
+    await runTransaction(currentPlayersRef, (currentPlayers) => {
+      if (!currentPlayers) return;
+      const updated = { ...currentPlayers };
+      const ownSeat = [0, 1, 2, 3].find(
+        (index) => updated[index]?.id === playerId,
+      );
+      if (ownSeat !== undefined) delete updated[ownSeat];
+
+      const spectators = { ...(updated.spectators || {}) };
+      delete spectators[playerId];
+      if (Object.keys(spectators).length > 0) updated.spectators = spectators;
+      else delete updated.spectators;
+
+      const presence = { ...(updated.presence || {}) };
+      delete presence[playerId];
+      if (Object.keys(presence).length > 0) updated.presence = presence;
+      else delete updated.presence;
+
+      return updated;
+    });
+  }
+
+  clearRoomTimers();
+  roomName = null;
+  roomDisplayName = "";
+  gameRef = null;
+  playersRef = null;
+  roomRef = null;
+  roomPlayers = {};
+  myPlayerIndex = null;
+  myName = null;
+  mySpectator = false;
+  roomFull = false;
+  gameStateLoaded = false;
+  lastGameState = null;
+  roomWasAvailable = false;
+  startingGame = false;
+  resettingRoom = false;
+  document.getElementById("gameScreen").hidden = true;
+  document.getElementById("homeScreen").hidden = false;
+  const roomUrl = new URL(window.location.href);
+  roomUrl.searchParams.delete("room");
+  window.history.replaceState(null, "", roomUrl);
+  gameView.render(null);
+  gameView.showGameEvents([]);
+  showHomeMessage(message);
+}
+
+function clearRoomTimers() {
+  for (const { timer } of seatTimers.values()) clearTimeout(timer);
+  seatTimers.clear();
+  for (const timer of spectatorTimers.values()) clearTimeout(timer);
+  spectatorTimers.clear();
+  if (hostElectionTimer) clearTimeout(hostElectionTimer.timer);
+  hostElectionTimer = null;
+}
+
+document.getElementById("leaveRoom").addEventListener("click", () => {
+  leaveRoom().catch((error) => {
+    console.error("No s'ha pogut sortir de la sala:", error);
+    showHomeMessage("No s'ha pogut sortir de la sala.");
+  });
+});
+
+document.getElementById("copyRoomLink").addEventListener("click", async () => {
+  try {
+    await navigator.clipboard.writeText(window.location.href);
+    document.getElementById("copyRoomLink").textContent = "Enllaç copiat";
+  } catch (error) {
+    console.error("No s'ha pogut copiar l'enllaç de la sala:", error);
+    document.getElementById("messages").textContent =
+      "No s'ha pogut copiar l'enllaç. Copia'l des de la barra d'adreces.";
   }
 });
 
@@ -280,7 +719,7 @@ function claimMembership() {
   claimingSeat = true;
   runTransaction(playersRef, (currentPlayers) => {
     const current = currentPlayers || {};
-    if (!current.presence?.[playerId]) return;
+    if (current.closed || !current.presence?.[playerId]) return;
     const ownSeat = [0, 1, 2, 3].some(
       (index) => current[index]?.id === playerId,
     );
@@ -363,41 +802,6 @@ function claimMembership() {
       claimingSeat = false;
     });
 }
-
-onValue(playersRef, (snapshot) => {
-  const players = snapshot.val() || {};
-  roomPlayers = players;
-  if (connected && !players.presence?.[playerId]) {
-    publishPresence();
-    return;
-  }
-
-  const ownSeat = [0, 1, 2, 3].find((index) => players[index]?.id === playerId);
-  if (ownSeat !== undefined) {
-    myPlayerIndex = ownSeat;
-    myName = players[ownSeat].name;
-    mySpectator = false;
-    roomFull = false;
-  } else if (players.spectators?.[playerId]) {
-    myPlayerIndex = null;
-    myName = players.spectators[playerId].name;
-    mySpectator = true;
-    roomFull = false;
-  } else {
-    myPlayerIndex = null;
-    myName = null;
-    mySpectator = false;
-  }
-
-  claimMembership();
-
-  updateLobbyMessage(players);
-  updateResetControl(players);
-  scheduleHostElection(players);
-  scheduleSeatReclamation(players);
-  startGameIfReady(players);
-  refreshCurrentGameView();
-});
 
 function scheduleHostElection(players) {
   const hostId = currentHostId(players);
@@ -654,6 +1058,7 @@ const gameView = createGameView({
     [0, 1, 2, 3].find(
       (index) => roomPlayers[index]?.id === currentHostId(roomPlayers),
     ),
+  getIsHost: () => isCurrentHost(),
   getIsSpectator: () => mySpectator,
   getRoomPlayers: () => roomPlayers,
   hasLegacySeats,
@@ -1251,17 +1656,6 @@ function respondToEnvit(action) {
     });
 }
 
-// ---------------- GAME LISTENER ----------------
-onValue(gameRef, (snapshot) => {
-  lastGameState = snapshot.val();
-  gameStateLoaded = true;
-  startingGame = false;
-  gameView.render(lastGameState);
-  gameView.showGameEvents(lastGameState?.eventLog || []);
-  claimMembership();
-  if (!lastGameState) startGameIfReady(roomPlayers);
-});
-
 function refreshCurrentGameView() {
   gameView.render(lastGameState);
 }
@@ -1274,7 +1668,12 @@ document.getElementById("reset").onclick = () => {
   const resetButton = document.getElementById("reset");
   resetButton.disabled = true;
 
-  Promise.all([set(playersRef, null), set(gameRef, null)])
+  Promise.all([
+    runTransaction(playersRef, (players) => ({
+      presence: players?.presence || {},
+    })),
+    set(gameRef, null),
+  ])
     .then(() => {
       startingGame = false;
       resettingRoom = false;
@@ -1290,6 +1689,18 @@ document.getElementById("reset").onclick = () => {
       console.error("No s'ha pogut reiniciar la sala:", error);
     });
 };
+
+document.getElementById("gameOverRestart").addEventListener("click", () => {
+    document.getElementById("reset").click();
+});
+
+document.getElementById("gameOverExit").addEventListener("click", () => {
+    leaveRoom().catch((error) => {
+      console.error("No s'ha pogut sortir de la sala:", error);
+      document.getElementById("messages").textContent =
+        "No s'ha pogut sortir de la sala.";
+    });
+});
 
 console.log(
   "Aplicació iniciada. Identificador del jugador:",

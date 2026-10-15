@@ -3,6 +3,18 @@
     "room1": {
       ".read": "auth != null",
       ".write": "auth != null"
+    },
+    "roomDirectory": {
+      ".read": "auth != null",
+      "$roomId": {
+        ".write": "auth != null"
+      }
+    },
+    "rooms": {
+      "$roomId": {
+        ".read": "auth != null",
+        ".write": "auth != null && root.child('roomDirectory').child($roomId).exists() && (!newData.exists() || root.child('roomDirectory').child($roomId).child('closed').val() != true)"
+      }
     }
   }
 }

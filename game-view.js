@@ -16,6 +16,7 @@ export function createGameView({
   game,
   getPlayerIndex,
   getHostPlayerIndex,
+  getIsHost,
   getIsSpectator,
   getRoomPlayers,
   hasLegacySeats,
@@ -69,6 +70,9 @@ export function createGameView({
     bidDialogMessage: document.getElementById("bidDialogMessage"),
     bidDialogActions: document.getElementById("bidDialogActions"),
     closeBidDialog: document.getElementById("closeBidDialog"),
+    gameOverDialog: document.getElementById("gameOverDialog"),
+    gameOverMessage: document.getElementById("gameOverMessage"),
+    gameOverRestart: document.getElementById("gameOverRestart"),
     openBidDialog: document.getElementById("openBidDialog"),
     continueHand: document.getElementById("continueHand"),
   };
@@ -116,15 +120,23 @@ export function createGameView({
 
     if (state.status === "finished" && state.matchWinner) {
       elements.messages.textContent = `L'equip ${state.matchWinner} ha guanyat el joc!`;
+      elements.gameOverMessage.textContent =
+        `Ha guanyat l'equip ${state.matchWinner}. ` +
+        `Resultat final: ${state.scoreA || 0} - ${state.scoreB || 0}.`;
+      elements.gameOverRestart.hidden = !getIsHost();
+      if (!elements.gameOverDialog.open) elements.gameOverDialog.showModal();
     } else if (
       state.status === "playing" &&
       state.handComplete &&
       !hasLegacySeats(getRoomPlayers())
     ) {
+      if (elements.gameOverDialog.open) elements.gameOverDialog.close();
       elements.messages.textContent =
         state.manoIndex === playerIndex
           ? "MÀ, prem «Continua» per repartir la mà següent."
           : "Esperant que MÀ continuï la partida.";
+    } else if (elements.gameOverDialog.open) {
+      elements.gameOverDialog.close();
     }
   }
 
@@ -132,6 +144,7 @@ export function createGameView({
     elements.openBidDialog.hidden = true;
     elements.continueHand.hidden = true;
     if (elements.bidDialog.open) elements.bidDialog.close();
+    if (elements.gameOverDialog.open) elements.gameOverDialog.close();
     elements.gameEvents.replaceChildren();
     elements.scoreA.textContent = "0";
     elements.scoreB.textContent = "0";
@@ -667,6 +680,9 @@ export function createGameView({
     ) {
       event.preventDefault();
     }
+  });
+  elements.gameOverDialog.addEventListener("cancel", (event) => {
+    event.preventDefault();
   });
 
   return {

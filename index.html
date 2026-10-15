@@ -7,7 +7,45 @@
     <title>Truc mallorquí</title>
   </head>
   <body>
-    <div id="scoreboard">
+    <main id="homeScreen">
+      <section class="homeCard" aria-labelledby="homeTitle">
+        <p class="eyebrow">TRUC MALLORQUÍ</p>
+        <h1 id="homeTitle">Tria una sala</h1>
+        <p class="homeIntro">Crea una partida o entra en una sala oberta.</p>
+        <form id="createRoomForm">
+          <label for="roomNameInput">Nom de la sala</label>
+          <div class="createRoomControls">
+            <input
+              id="roomNameInput"
+              name="roomName"
+              maxlength="32"
+              autocomplete="off"
+              placeholder="Ex. Partida de dissabte"
+              required
+            />
+            <button type="submit">Crea una sala</button>
+          </div>
+        </form>
+        <p id="homeMessage" role="status" aria-live="polite"></p>
+        <section class="roomDirectory" aria-labelledby="roomDirectoryTitle">
+          <h2 id="roomDirectoryTitle">Sales obertes</h2>
+          <ul id="roomList"></ul>
+        </section>
+      </section>
+    </main>
+
+    <div id="gameScreen" hidden>
+      <header id="roomHeader">
+        <div>
+          <strong id="currentRoomName"></strong>
+          <span id="currentRoomCode"></span>
+        </div>
+        <div class="roomHeaderActions">
+          <button id="copyRoomLink" type="button">Copia l'enllaç</button>
+          <button id="leaveRoom" type="button">Surt de la sala</button>
+        </div>
+      </header>
+      <div id="scoreboard">
       <section class="teamScore" aria-label="Marcador de l'equip A">
         <div class="teamScoreHeading">
           <h2>Equip A</h2>
@@ -66,11 +104,11 @@
         aria-relevant="additions"
         aria-label="Esdeveniments de la partida"
       ></div>
-    </div>
+      </div>
 
-    <div id="messages"></div>
+      <div id="messages"></div>
 
-    <div id="table">
+      <div id="table">
       <div id="tableCards"></div>
 
       <div id="pTop" class="player pTop">
@@ -96,20 +134,32 @@
         <div class="playerLabel" id="labelBottom"></div>
         <div id="mainCards"></div>
       </div>
+      </div>
+
+      <button id="openBidDialog" type="button" hidden>Fer una aposta</button>
+      <button id="continueHand" type="button" hidden>Continua</button>
+      <dialog id="bidDialog" aria-labelledby="bidDialogTitle">
+        <h2 id="bidDialogTitle">Aposta</h2>
+        <p id="bidDialogMessage"></p>
+        <div id="bidDialogActions"></div>
+        <button id="closeBidDialog" type="button">Tanca</button>
+      </dialog>
+      <dialog id="gameOverDialog" aria-labelledby="gameOverTitle">
+        <p class="eyebrow">PARTIDA ACABADA</p>
+        <h2 id="gameOverTitle">Fi de la partida</h2>
+        <p id="gameOverMessage"></p>
+        <div class="gameOverActions">
+          <button id="gameOverExit" type="button">Torna a la pantalla principal</button>
+          <button id="gameOverRestart" type="button" hidden>
+            Torna a començar
+          </button>
+        </div>
+      </dialog>
+      <div class="game-controls">
+        <button id="reset" type="button" hidden>Reinicia la sala</button>
+      </div>
     </div>
 
-    <button id="openBidDialog" type="button" hidden>Fer una aposta</button>
-    <button id="continueHand" type="button" hidden>Continua</button>
-    <dialog id="bidDialog" aria-labelledby="bidDialogTitle">
-      <h2 id="bidDialogTitle">Aposta</h2>
-      <p id="bidDialogMessage"></p>
-      <div id="bidDialogActions"></div>
-      <button id="closeBidDialog" type="button">Tanca</button>
-    </dialog>
-    <div class="game-controls">
-      <button id="reset" type="button" hidden>Reinicia la sala</button>
-    </div>
-
-    <script type="module" src="./app.js?v=20261007-16"></script>
+    <script type="module" src="./app.js?v=20261015-20"></script>
   </body>
 </html>

@@ -27,9 +27,6 @@ body {
   min-height: 0;
   margin: 0;
   padding: clamp(12px, 2.5vh, 24px) clamp(12px, 3vw, 32px);
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
-  gap: clamp(12px, 2vh, 20px);
   overflow: hidden;
   background:
     radial-gradient(
@@ -38,6 +35,185 @@ body {
       transparent 65%
     ),
     #101612;
+}
+
+#homeScreen {
+  width: min(100%, 620px);
+  height: 100%;
+  margin: 0 auto;
+  display: grid;
+  place-items: center;
+  overflow: auto;
+}
+
+.homeCard {
+  width: 100%;
+  padding: clamp(22px, 5vw, 42px);
+  border: 1px solid rgba(221, 194, 139, 0.28);
+  border-radius: 22px;
+  background: rgba(20, 35, 25, 0.94);
+  box-shadow: 0 18px 50px rgba(0, 0, 0, 0.28);
+}
+
+.eyebrow {
+  margin: 0 0 8px;
+  color: #d8bf83;
+  font-size: 12px;
+  font-weight: 750;
+  letter-spacing: 0.16em;
+}
+
+.homeCard h1 {
+  margin: 0;
+  color: #f4f1e8;
+  font-size: clamp(28px, 7vw, 42px);
+}
+
+.homeIntro {
+  margin: 8px 0 26px;
+  color: #aebbaa;
+}
+
+#createRoomForm label {
+  display: block;
+  margin-bottom: 8px;
+  color: #d8ddce;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.createRoomControls {
+  display: flex;
+  gap: 8px;
+}
+
+.createRoomControls input {
+  min-width: 0;
+  flex: 1;
+  padding: 10px 12px;
+  border: 1px solid rgba(225, 204, 158, 0.28);
+  border-radius: 9px;
+  background: #101912;
+  color: #f4f1e8;
+  font: inherit;
+}
+
+.createRoomControls input:focus-visible {
+  outline: 2px solid #f1d26d;
+  outline-offset: 2px;
+}
+
+#homeMessage {
+  min-height: 1.4em;
+  margin: 10px 0 18px;
+  color: #f1e5c7;
+  font-size: 13px;
+}
+
+.roomDirectory {
+  padding-top: 8px;
+  border-top: 1px solid rgba(221, 194, 139, 0.18);
+}
+
+.roomDirectory h2 {
+  margin: 12px 0;
+  color: #d8bf83;
+  font-size: 16px;
+}
+
+#roomList {
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+  list-style: none;
+}
+
+.roomListItem,
+.emptyRoomList {
+  padding: 12px 14px;
+  border: 1px solid rgba(221, 194, 139, 0.16);
+  border-radius: 11px;
+  background: rgba(16, 25, 18, 0.72);
+}
+
+.roomListItem {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.roomListDetails {
+  min-width: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.roomListDetails strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.roomListDetails span,
+.emptyRoomList {
+  color: #aebbaa;
+  font-size: 12px;
+}
+
+#gameScreen {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  display: grid;
+  grid-template-rows: auto minmax(0, auto) minmax(0, 1fr);
+  gap: clamp(8px, 1.5vh, 16px);
+}
+
+#roomHeader {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #f4f1e8;
+}
+
+#roomHeader > div:first-child {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+
+#currentRoomName {
+  overflow: hidden;
+  font-size: clamp(14px, 2vw, 18px);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#currentRoomCode {
+  color: #aebbaa;
+  font-size: 11px;
+}
+
+.roomHeaderActions {
+  display: flex;
+  gap: 8px;
+}
+
+.roomHeaderActions button {
+  min-height: 34px;
+  padding: 6px 10px;
+  font-size: 12px;
+}
+
+#gameScreen #scoreboard {
+  align-self: stretch;
+}
+
+#gameScreen #table {
+  min-height: 0;
 }
 
 #scoreboard {
@@ -482,6 +658,55 @@ button:focus-visible {
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
 }
 
+#gameOverDialog {
+  width: min(460px, calc(100vw - 28px));
+  margin: auto;
+  padding: clamp(22px, 5vw, 34px);
+  border: 1px solid rgba(225, 204, 158, 0.38);
+  border-radius: 18px;
+  background:
+    radial-gradient(ellipse at top, rgba(50, 91, 54, 0.4), transparent 75%),
+    #1b2c21;
+  color: #f4f1e8;
+  text-align: center;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+}
+
+#gameOverDialog::backdrop {
+  background: rgba(5, 9, 6, 0.78);
+  backdrop-filter: blur(4px);
+}
+
+#gameOverDialog h2 {
+  margin: 0 0 12px;
+  color: #f1d99e;
+  font-size: clamp(24px, 6vw, 34px);
+}
+
+#gameOverMessage {
+  margin: 0 0 24px;
+  color: #d5ddcf;
+  font-size: 16px;
+  line-height: 1.5;
+}
+
+.gameOverActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 10px;
+}
+
+#gameOverRestart {
+  border-color: rgba(241, 210, 141, 0.72);
+  background: #d8bf83;
+  color: #18251b;
+}
+
+#gameOverRestart:hover {
+  background: #ecd89e;
+}
+
 #bidDialog::backdrop {
   background: rgba(5, 9, 6, 0.18);
 }
@@ -521,7 +746,16 @@ button:focus-visible {
 @media (max-width: 620px) {
   body {
     padding: 10px;
-    gap: 10px;
+  }
+
+  .createRoomControls,
+  #roomHeader {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .roomHeaderActions {
+    justify-content: space-between;
   }
 
   #table {
